@@ -45,7 +45,7 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
         Mesh mesh;
         mesh.name = shape.name;
 
-        std::unordered_map<int, uint32_t> uniqueVerticies; // pos+normal+uv -> index
+        std::vector<Vertex> uniqueVertices;
 
         for (const auto& index : shape.mesh.indices) {
             Vertex vertex{};
@@ -78,19 +78,43 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
             }
 
             // deduplication
-            // later
 
-            mesh.vertices.push_back(vertex);
-            mesh.indices.push_back(static_cast<uint32_t>(mesh.indices.size()));
+            if (uniqueVertices.empty()) {
+                mesh.vertices.push_back(vertex);
+                mesh.indices.push_back(static_cast<uint32_t>(mesh.indices.size()));
+            }
+
+            for (int i = 0; i < uniqueVertices.size(); i++) {
+                auto uniqueVertex = uniqueVertices[i];
+
+                if (vertex.position.x == uniqueVertex.position.x && vertex.position.y == uniqueVertex.position.y && vertex.position.z == uniqueVertex.position.z) {
+                    // vertex already exists
+                    mesh.indices.push_back(i);
+                    break;
+                }
+                if (i == uniqueVertices.size() - 1) {
+                    // end of list - vertice doesnt exist
+                    uint32_t newIndex = static_cast<uint32_t>(mesh.vertices.size());
+                    mesh.vertices.push_back(vertex);
+                    mesh.indices.push_back(newIndex);
+                }
+            } 
+            
+
+            //mesh.vertices.push_back(vertex);
+            //mesh.indices.push_back(static_cast<uint32_t>(mesh.indices.size()));
 
         }
     
         // compute normals if missing
         // later
 
+
         model.meshes.push_back(std::move(mesh));
 
     }
+
+    std::cout << "Uploading MESH to device" << std::endl;
 
     // upload to GPU
     for (auto& mesh : model.meshes) {
@@ -98,26 +122,25 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
         size_t vbSize = mesh.vertices.size() * sizeof(Vertex);
         size_t ibSize = mesh.indices.size() * sizeof(uint32_t);
 
-        auto vbUpload = uploadBuffer(mesh.vertices.data(), vbSize, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-        auto ibUpload = uploadBuffer(mesh.indices.data(), ibSize, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+        auto vbUpload = createBuffers(mesh.vertices.data(), vbSize, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        auto ibUpload = createBuffers(mesh.indices.data(), ibSize, D3D12_RESOURCE_STATE_INDEX_BUFFER);
 
-
-        model.vertexBuffers.push_back(vbUpload);
-        model.indexBuffers.push_back(ibUpload);
+        model.vertexBuffers.push_back(vbUpload.uploadBuffer);
+        model.indexBuffers.push_back(ibUpload.uploadBuffer);
     }
 
     return model;
 }
 
 // create default heap buffer
-ID3D12Resource* MeshManager::uploadBuffer(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState) {
+MeshManager::UploadBufferTarget MeshManager::createBuffers(const void* data, UINT16 byteSize, D3D12_RESOURCE_STATES finalState) {
 
     DXGI_SAMPLE_DESC NO_AA = { .Count = 1, .Quality = 0 };
     D3D12_RESOURCE_DESC DESC = {
         .Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
         .Width = 0, // will be changed in copies
         .Height = 1,
-        .DepthOrArraySize = byteSize,
+        .DepthOrArraySize = 1,
         .MipLevels = 1,
         .SampleDesc = NO_AA,
         .Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
@@ -126,7 +149,8 @@ ID3D12Resource* MeshManager::uploadBuffer(const void* data, size_t byteSize, D3D
     DESC.Flags = D3D12_RESOURCE_FLAG_NONE;
     D3D12_HEAP_PROPERTIES UPLOAD_HEAP = { .Type = D3D12_HEAP_TYPE_UPLOAD };
 
-    ID3D12Resource* upload = nullptr;
+
+    ID3D12Resource* upload;
     d3dDevice->CreateCommittedResource(
         &UPLOAD_HEAP,
         D3D12_HEAP_FLAG_NONE,
@@ -136,7 +160,7 @@ ID3D12Resource* MeshManager::uploadBuffer(const void* data, size_t byteSize, D3D
         IID_PPV_ARGS(&upload)
     );
 
-    void* mapped = nullptr;
+    void* mapped;
     upload->Map(0, nullptr, &mapped);
     memcpy(mapped, data, byteSize);
     upload->Unmap(0, nullptr);
@@ -155,5 +179,5 @@ ID3D12Resource* MeshManager::uploadBuffer(const void* data, size_t byteSize, D3D
         IID_PPV_ARGS(&target)
     );
 
-    return upload;
+    return {upload, target};
 }

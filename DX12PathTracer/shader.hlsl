@@ -113,10 +113,29 @@ void HitFloor(inout Payload payload, float2 uv)
 
 }
 
+void Hit(inout Payload payload, float2 uv)
+{
+    
+    uint tri = PrimitiveIndex();
+    tri /= 2;
+    float3 normal = (tri.xxx % 3 == uint3(0, 1, 2)) * (tri < 3 ? -1 : 1);
+    float3 worldNormal = normalize(mul(normal, (float3x3) ObjectToWorld4x3()));
+    
+    float3 color = abs(normal) / 3 + 0.5;
+    if (uv.x < 0.03 || uv.y < 0.03)
+        color = 0.25.rrr;
+    
+    color *= saturate(dot(worldNormal, normalize(light))) + 0.33;
+    payload.color = color;
+    
+}
+
 [shader("closesthit")]
 void ClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
     float2 uv = attribs.barycentrics;
+    Hit(payload, uv);
+    return;
     
     switch (InstanceID())
     {

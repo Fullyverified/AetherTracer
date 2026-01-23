@@ -85,9 +85,12 @@ void PathTracer::run() {
 }
 
 void PathTracer::init(HWND hwnd) {
-	initDevice();           // ← implicit this->initDevice()
+	initDevice();
 	initSurfaces(hwnd);
 	initCommand();
+
+	meshManager = new MeshManager(d3dDevice, cmdList);
+
 	initMeshes();
 	initBottomLevel();
 	initScene();
@@ -112,15 +115,19 @@ void PathTracer::initDevice() {
 
 	// feature level dx12_2
 	IDXGIAdapter* adapter = nullptr;
-	D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&device));
+	D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&d3dDevice));
 
 	// command queue
 	D3D12_COMMAND_QUEUE_DESC cmdQueueDesc = { .Type = D3D12_COMMAND_LIST_TYPE_DIRECT, };
-	device->CreateCommandQueue(&cmdQueueDesc, IID_PPV_ARGS(&cmdQueue));
+	d3dDevice->CreateCommandQueue(&cmdQueueDesc, IID_PPV_ARGS(&cmdQueue));
 	// fence
-	device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+	d3dDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
 
-	D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&device));
+
+	if (d3dDevice == nullptr) {
+		std::cout << "device nullptr" << std::endl;
+	}
+	else std::cout << "device exists" << std::endl;
 }
 
 
@@ -161,7 +168,7 @@ void PathTracer::initSurfaces(HWND hwnd) {
 		.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
 		.NumDescriptors = 1,
 		.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE };
-	device->CreateDescriptorHeap(&uavHeapDesc, IID_PPV_ARGS(&uavHeap));
+	d3dDevice->CreateDescriptorHeap(&uavHeapDesc, IID_PPV_ARGS(&uavHeap));
 
 	resize(hwnd);
 }
@@ -198,20 +205,20 @@ void PathTracer::resize(HWND hwnd) {
 	   .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
 	   .SampleDesc = NO_AA,
 	   .Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS };
-	device->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &rtDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&renderTarget));
+	d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &rtDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&renderTarget));
 
 	D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
    .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
    .ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D };
-	device->CreateUnorderedAccessView(renderTarget, nullptr, &uavDesc, uavHeap->GetCPUDescriptorHandleForHeapStart());
+	d3dDevice->CreateUnorderedAccessView(renderTarget, nullptr, &uavDesc, uavHeap->GetCPUDescriptorHandleForHeapStart());
 }
 
 // command list and allocator
 
 void PathTracer::initCommand() {
 	// only one
-	device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc));
-	device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&cmdList));
+	d3dDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc));
+	d3dDevice->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&cmdList));
 }
 
 // meshes
@@ -219,23 +226,7 @@ void PathTracer::initCommand() {
 void PathTracer::initMeshes() {
 
 
-	auto makeAndCopy = [this](auto& data) {
-		auto desc = BASIC_BUFFER_DESC;
-		desc.Width = sizeof(data);
-		ID3D12Resource* res;
-		device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&res));
-
-		void* ptr;
-		res->Map(0, nullptr, &ptr);
-		memcpy(ptr, data, sizeof(data));
-		res->Unmap(0, nullptr);
-		return res;
-
-		};
-
-	quadVB = makeAndCopy(quadVtx);
-	cubeVB = makeAndCopy(cubeVtx);
-	cubeIB = makeAndCopy(cubeIdx);
+	loadedModels.emplace_back(meshManager->loadFromObject("assets/meshes/cube.obj"));
 
 }
 
@@ -249,13 +240,13 @@ ID3D12Resource* PathTracer::makeAccelerationStructure(const D3D12_BUILD_RAYTRACI
 		desc.Width = size;
 		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 		ID3D12Resource* buffer;
-		device->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, initialState, nullptr, IID_PPV_ARGS(&buffer));
+		d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, initialState, nullptr, IID_PPV_ARGS(&buffer));
 
 		return buffer;
 		};
 
 	D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo;
-	device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuildInfo);
+	d3dDevice->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuildInfo);
 
 	if (updateScratchSize) *updateScratchSize = prebuildInfo.UpdateScratchDataSizeInBytes;
 
@@ -279,19 +270,19 @@ ID3D12Resource* PathTracer::makeAccelerationStructure(const D3D12_BUILD_RAYTRACI
 
 // BLAS
 
-ID3D12Resource* PathTracer::makeBLAS(ID3D12Resource* vertexBuffer, UINT vertexFloats, ID3D12Resource* indexBuffer, UINT indices) {
+ID3D12Resource* PathTracer::makeBLAS(ID3D12Resource* vertexBuffer, UINT vertexSize, ID3D12Resource* indexBuffer, UINT indicesSize) {
 
-			D3D12_RAYTRACING_GEOMETRY_DESC geometryDesc = {
-			.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES,
-			.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE,
-			.Triangles = {.Transform3x4 = 0,
-				.IndexFormat = indexBuffer ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_UNKNOWN,
-				.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT,
-				.IndexCount = indices,
-				.VertexCount = vertexFloats / 3,
-				.IndexBuffer = indexBuffer ? indexBuffer->GetGPUVirtualAddress() : 0,
-				.VertexBuffer = {.StartAddress = vertexBuffer->GetGPUVirtualAddress(),
-				.StrideInBytes = sizeof(float) * 3}
+	D3D12_RAYTRACING_GEOMETRY_DESC geometryDesc = {
+		.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES,
+		.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE,
+		.Triangles = {.Transform3x4 = 0,
+			.IndexFormat = DXGI_FORMAT_R32_UINT,
+			.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT,
+			.IndexCount = indicesSize,
+			.VertexCount = vertexSize,
+			.IndexBuffer = indexBuffer->GetGPUVirtualAddress(),
+			.VertexBuffer = {.StartAddress = vertexBuffer->GetGPUVirtualAddress(),
+			.StrideInBytes = sizeof(MeshManager::Vertex)}
 		}
 	};
 
@@ -309,8 +300,16 @@ ID3D12Resource* PathTracer::makeBLAS(ID3D12Resource* vertexBuffer, UINT vertexFl
 }
 
 void PathTracer::initBottomLevel() {
-	quadBlas = makeBLAS(quadVB, std::size(quadVtx));
-	cubeBlas = makeBLAS(cubeVB, std::size(cubeVtx), cubeIB, std::size(cubeIdx));
+
+	BLAS.clear();
+
+	// only the first mesh in a model for now
+	// store all bottom level AS in a vector
+	// instance IDs should be in the same order as BLAS creation
+	for (MeshManager::LoadedModel loadedModel : loadedModels) {
+		BLAS.emplace_back(makeBLAS(loadedModel.vertexBuffers[0], std::size(loadedModel.meshes[0].vertices), loadedModel.indexBuffers[0], std::size(loadedModel.meshes[0].indices)));
+	}
+	NUM_INSTANCES = loadedModels.size(); // this is a guess
 }
 
 // TLAS
@@ -331,26 +330,16 @@ ID3D12Resource* PathTracer::makeTLAS(ID3D12Resource* instances, UINT numInstance
 
 void PathTracer::updateTransforms() {
 
-	using namespace DirectX;
-	auto set = [this](int idx, XMMATRIX mx) {
-		auto* ptr = reinterpret_cast<XMFLOAT3X4*>(&instanceData[idx].Transform);
-		XMStoreFloat3x4(ptr, mx);
-		};
+	auto defaultTransform = DirectX::XMMatrixRotationRollPitchYaw(0, 0, 0);
+	defaultTransform *= DirectX::XMMatrixTranslation(0, 1, 0);
 
-	auto time = static_cast<float>(GetTickCount64()) / 1000;
+	// for each instance apply the default transform
+	for (int i = 0; i < NUM_INSTANCES; i++) {
 
-	auto cube = XMMatrixRotationRollPitchYaw(time / 2, time / 3, time / 5);
-	cube *= XMMatrixTranslation(-1.5, 2, 2);
-	set(0, cube);
-
-	auto mirror = XMMatrixRotationX(-1.8f);
-	mirror *= XMMatrixRotationY(XMScalarSinEst(time) / 8 + 1);
-	mirror *= XMMatrixTranslation(2, 2, 2);
-	set(1, mirror);
-
-	auto floor = XMMatrixScaling(5, 5, 5);
-	floor *= XMMatrixTranslation(0, 0, 2);
-	set(2, floor);
+		auto* ptr = reinterpret_cast<DirectX::XMFLOAT3X4*>(&instanceData[i].Transform);
+		XMStoreFloat3x4(ptr, defaultTransform);
+		
+	}
 
 }
 
@@ -358,14 +347,15 @@ void PathTracer::initScene() {
 
 	auto instancesDesc = BASIC_BUFFER_DESC;
 	instancesDesc.Width = sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * NUM_INSTANCES;
-	device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &instancesDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&instances));
+	d3dDevice->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &instancesDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&instances));
 	instances->Map(0, nullptr, reinterpret_cast<void**>(&instanceData));
 
+	// if instance number and BLAS creation align
 	for (UINT i = 0; i < NUM_INSTANCES; i++) {
 		instanceData[i] = {
 		.InstanceID = i,
 		.InstanceMask = 1,
-		.AccelerationStructure = (i ? quadBlas : cubeBlas)->GetGPUVirtualAddress(),
+		.AccelerationStructure = BLAS[i]->GetGPUVirtualAddress(),
 		};
 	}
 	updateTransforms();
@@ -381,7 +371,7 @@ void PathTracer::initTopLevel() {
 	auto desc = BASIC_BUFFER_DESC;
 	desc.Width = std::max(updateScratchSize, 8ULL);
 	desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-	device->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&tlasUpdateScratch));
+	d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&tlasUpdateScratch));
 
 }
 
@@ -407,7 +397,7 @@ void PathTracer::initRootSignature() {
 	ID3DBlob* blob;
 	D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1_0, &blob, nullptr);
 
-	device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rootSignature));
+	d3dDevice->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rootSignature));
 	blob->Release();
 
 }
@@ -447,7 +437,7 @@ void PathTracer::initPipeline() {
 	D3D12_STATE_OBJECT_DESC desc = { .Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE,
 		.NumSubobjects = std::size(subobjects),
 		.pSubobjects = subobjects };
-	device->CreateStateObject(&desc, IID_PPV_ARGS(&pso));
+	d3dDevice->CreateStateObject(&desc, IID_PPV_ARGS(&pso));
 
 }
 
@@ -458,7 +448,7 @@ void PathTracer::initShaderTables() {
 
 	auto idDesc = BASIC_BUFFER_DESC;
 	idDesc.Width = NUM_SHADER_IDS * D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT;
-	device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &idDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&shaderIDs));
+	d3dDevice->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &idDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&shaderIDs));
 
 	ID3D12StateObjectProperties* props;
 	pso->QueryInterface(&props);

@@ -18,9 +18,7 @@
 class PathTracer {
 public:
 
-	PathTracer() {
-		meshManager = new MeshManager(device);
-	}
+	PathTracer() {}
 
 	~PathTracer() {}
 
@@ -48,7 +46,7 @@ public:
 	void quit();
 
 	ID3D12Resource* makeAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, UINT64* updateScratchSize = nullptr);
-	ID3D12Resource* makeBLAS(ID3D12Resource* vertexBuffer, UINT vertexFloats, ID3D12Resource* indexBuffer = nullptr, UINT indices = 0);
+	ID3D12Resource* makeBLAS(ID3D12Resource* vertexBuffer, UINT vertexSize, ID3D12Resource* indexBuffer, UINT indicesSize);
 	ID3D12Resource* makeTLAS(ID3D12Resource* instances, UINT numInstances, UINT64* updateScratchSize);
 
 	DXGI_SAMPLE_DESC NO_AA = { .Count = 1, .Quality = 0 };
@@ -65,7 +63,7 @@ public:
 
 	// device init
 	IDXGIFactory4* factory;
-	ID3D12Device5* device;
+	ID3D12Device5* d3dDevice;
 	ID3D12CommandQueue* cmdQueue;
 	ID3D12Fence* fence;
 
@@ -81,29 +79,20 @@ public:
 	ID3D12CommandAllocator* cmdAlloc; // block of memory
 	ID3D12GraphicsCommandList4* cmdList;
 
-	// Mesh data
+	// meshes
 
-	float quadVtx[18] = { -1, 0, -1, -1, 0,  1, 1, 0, 1, -1, 0, -1,  1, 0, -1, 1, 0, 1 };
-
-	float cubeVtx[24] = { -1, -1, -1, 1, -1, -1, -1, 1, -1, 1, 1, -1, -1, -1,  1, 1, -1,  1, -1, 1,  1, 1, 1,  1 };
-
-	short cubeIdx[36] = { 4, 6, 0, 2, 0, 6, 0, 1, 4, 5, 4, 1, 0, 2, 1, 3, 1, 2, 1, 3, 5, 7, 5, 3, 2, 6, 3, 7, 3, 6, 4, 5, 6, 7, 6, 5 };
-
-	// mesh buffers
-	ID3D12Resource* quadVB;
-	ID3D12Resource* cubeVB;
-	ID3D12Resource* cubeIB;
-
+	std::vector<MeshManager::LoadedModel> loadedModels;
 
 	// accel structures
 	ID3D12Resource* quadBlas;
 	ID3D12Resource* cubeBlas;
+	std::vector<ID3D12Resource*> BLAS;
 
 	ID3D12Resource* tlas;
 	ID3D12Resource* tlasUpdateScratch;
 
 	// instances
-	UINT NUM_INSTANCES = 3;
+	UINT NUM_INSTANCES = 0;
 	ID3D12Resource* instances;
 	D3D12_RAYTRACING_INSTANCE_DESC* instanceData;
 

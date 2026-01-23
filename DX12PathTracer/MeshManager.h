@@ -8,7 +8,7 @@
 class MeshManager {
 public:
 
-	MeshManager(ID3D12Device5* d3dDevice) : d3dDevice(d3dDevice) {}
+	MeshManager(ID3D12Device5* d3dDevice, ID3D12GraphicsCommandList4* cmdList) : d3dDevice(d3dDevice), cmdList(cmdList) {}
 	~MeshManager() {}
 
 	struct alignas(16) Vertex {
@@ -32,12 +32,19 @@ public:
 		std::vector<ID3D12Resource*> indexBuffers;
 	};
 
-	LoadedModel loadFromObject(const std::string& fileName, bool forceOpaque = true, bool computeNormalsIfMissing = true);
-	ID3D12Resource* uploadVertices(const std::vector<Vertex>& verts);
-	ID3D12Resource* uploadIndices(const std::vector<uint32_t>& indices);
+	struct UploadBufferTarget {
+		ID3D12Resource* uploadBuffer; // cpu
+		ID3D12Resource* targetBuffer; // gpu
+	};
 
-	ID3D12Resource* uploadBuffer(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState);
+	LoadedModel loadFromObject(const std::string& fileName, bool forceOpaque = true, bool computeNormalsIfMissing = true);
+
+	UploadBufferTarget createBuffers(const void* data, UINT16 byteSize, D3D12_RESOURCE_STATES finalState);
 
 	ID3D12Device5* d3dDevice;
+	ID3D12GraphicsCommandList4* cmdList;
+
+	
+
 };
 
