@@ -45,7 +45,7 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
         Mesh mesh;
         mesh.name = shape.name;
 
-        std::vector<Vertex> uniqueVertices;
+        //std::vector<Vertex> uniqueVertices;
 
         for (const auto& index : shape.mesh.indices) {
             Vertex vertex{};
@@ -77,32 +77,34 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
                 };
             }
 
+
+            //mesh.vertices.push_back(vertex);
+            //mesh.indices.push_back(mesh.vertices.size()-1);
+
             // deduplication
 
-            if (uniqueVertices.empty()) {
+            if (mesh.vertices.empty()) {
                 mesh.vertices.push_back(vertex);
-                mesh.indices.push_back(static_cast<uint32_t>(mesh.indices.size()));
+                mesh.indices.push_back(0);
+                continue;
             }
 
-            for (int i = 0; i < uniqueVertices.size(); i++) {
-                auto uniqueVertex = uniqueVertices[i];
+            for (int i = 0; i < mesh.vertices.size(); i++) {
+                auto uniqueVertex = mesh.vertices[i];
 
                 if (vertex.position.x == uniqueVertex.position.x && vertex.position.y == uniqueVertex.position.y && vertex.position.z == uniqueVertex.position.z) {
                     // vertex already exists
                     mesh.indices.push_back(i);
                     break;
                 }
-                if (i == uniqueVertices.size() - 1) {
+                if (i == mesh.vertices.size() - 1) {
                     // end of list - vertice doesnt exist
-                    uint32_t newIndex = static_cast<uint32_t>(mesh.vertices.size());
                     mesh.vertices.push_back(vertex);
-                    mesh.indices.push_back(newIndex);
+                    mesh.indices.push_back(mesh.vertices.size()-1);
+                    break;
                 }
             } 
             
-
-            //mesh.vertices.push_back(vertex);
-            //mesh.indices.push_back(static_cast<uint32_t>(mesh.indices.size()));
 
         }
     
@@ -114,39 +116,50 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
 
     }
 
-    std::cout << "Uploading MESH to device" << std::endl;
+    std::cout << "Creating upload and default buffers" << std::endl;
 
-    // upload to GPU
+    // create upload and default buffers and store them
     for (auto& mesh : model.meshes) {
     
-        size_t vbSize = mesh.vertices.size() * sizeof(Vertex);
+        
+
+        size_t vbSize = mesh.vertices.size() * sizeof(MeshManager::Vertex);
         size_t ibSize = mesh.indices.size() * sizeof(uint32_t);
+        std::cout << ": vbSize=" << vbSize << " bytes, ibSize=" << ibSize << " bytes\n";
+
 
         auto vbUpload = createBuffers(mesh.vertices.data(), vbSize, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
         auto ibUpload = createBuffers(mesh.indices.data(), ibSize, D3D12_RESOURCE_STATE_INDEX_BUFFER);
 
-        model.vertexBuffers.push_back(vbUpload.uploadBuffer);
-        model.indexBuffers.push_back(ibUpload.uploadBuffer);
+        // CPU memory buffers
+        model.vertexUploadBuffers.push_back(vbUpload.HEAP_UPLOAD_BUFFER);
+        model.indexUploadBuffers.push_back(ibUpload.HEAP_UPLOAD_BUFFER);
+        // GPU memory buffers
+        model.vertexDefaultBuffers.push_back(vbUpload.HEAP_DEFAULT_BUFFER);
+        model.indexDefaultBuffers.push_back(ibUpload.HEAP_DEFAULT_BUFFER);
+
     }
 
     return model;
 }
 
 // create default heap buffer
-MeshManager::UploadBufferTarget MeshManager::createBuffers(const void* data, UINT16 byteSize, D3D12_RESOURCE_STATES finalState) {
+MeshManager::UploadDefaultBufferPair MeshManager::createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState) {
+    std::cout << "byteSize: " << byteSize << std::endl;
 
+
+    // CPU Buffer (upload buffer)
     DXGI_SAMPLE_DESC NO_AA = { .Count = 1, .Quality = 0 };
     D3D12_RESOURCE_DESC DESC = {
         .Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
-        .Width = 0, // will be changed in copies
+        .Width = byteSize,
         .Height = 1,
         .DepthOrArraySize = 1,
         .MipLevels = 1,
         .SampleDesc = NO_AA,
         .Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+        .Flags = D3D12_RESOURCE_FLAG_NONE,
     };
-    DESC.Width = byteSize;
-    DESC.Flags = D3D12_RESOURCE_FLAG_NONE;
     D3D12_HEAP_PROPERTIES UPLOAD_HEAP = { .Type = D3D12_HEAP_TYPE_UPLOAD };
 
 
@@ -161,9 +174,11 @@ MeshManager::UploadBufferTarget MeshManager::createBuffers(const void* data, UIN
     );
 
     void* mapped;
-    upload->Map(0, nullptr, &mapped);
-    memcpy(mapped, data, byteSize);
-    upload->Unmap(0, nullptr);
+    upload->Map(0, nullptr, &mapped); // mapped now points to the upload buffer
+    memcpy(mapped, data, byteSize); // copy data to upload buffer
+    upload->Unmap(0, nullptr); // 7
+
+    // VRAM Buffer
 
     D3D12_HEAP_PROPERTIES DEFAULT_HEAP = { .Type = D3D12_HEAP_TYPE_DEFAULT };
 
@@ -174,7 +189,7 @@ MeshManager::UploadBufferTarget MeshManager::createBuffers(const void* data, UIN
         &DEFAULT_HEAP,
         D3D12_HEAP_FLAG_NONE,
         &DESC,
-        D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_COMMON,
         nullptr,
         IID_PPV_ARGS(&target)
     );

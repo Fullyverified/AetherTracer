@@ -117,8 +117,10 @@ void Hit(inout Payload payload, float2 uv)
 {
     
     uint tri = PrimitiveIndex();
+    
     tri /= 2;
     float3 normal = (tri.xxx % 3 == uint3(0, 1, 2)) * (tri < 3 ? -1 : 1);
+    
     float3 worldNormal = normalize(mul(normal, (float3x3) ObjectToWorld4x3()));
     
     float3 color = abs(normal) / 3 + 0.5;
@@ -127,6 +129,8 @@ void Hit(inout Payload payload, float2 uv)
     
     color *= saturate(dot(worldNormal, normalize(light))) + 0.33;
     payload.color = color;
+    
+    //payload.color = (0.5, 0.5, 0.5);
     
 }
 

@@ -226,7 +226,60 @@ void PathTracer::initCommand() {
 void PathTracer::initMeshes() {
 
 
-	loadedModels.emplace_back(meshManager->loadFromObject("assets/meshes/cube.obj"));
+	loadedModels.emplace_back(meshManager->loadFromObject("assets/meshes/CompanionCube.obj"));
+
+	// Reset cmdList and cmdAllc
+	cmdAlloc->Reset();
+	cmdList->Reset(cmdAlloc, nullptr);
+
+	std::cout << "Pushing buffers to VRAM" << std::endl;
+
+	for (MeshManager::LoadedModel loadedModel : loadedModels) {
+		
+		for (int i = 0; i < loadedModel.meshes.size(); i++) {
+			MeshManager::Mesh mesh = loadedModel.meshes[i];
+
+			size_t vbSize = mesh.vertices.size() * sizeof(MeshManager::Vertex);
+			size_t ibSize = mesh.indices.size() * sizeof(uint32_t);
+
+			std::cout << "Mesh " << i << ": vbSize=" << vbSize << " bytes, ibSize=" << ibSize << " bytes\n";
+
+			// Barrier - transition vertex target to COPY_DEST
+			D3D12_RESOURCE_BARRIER barrier = {};
+			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+			barrier.Transition.pResource = loadedModel.vertexDefaultBuffers[i];
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+			barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			cmdList->ResourceBarrier(1, &barrier);
+
+			// transition index buffer
+			barrier.Transition.pResource = loadedModel.indexDefaultBuffers[i];
+			cmdList->ResourceBarrier(1, &barrier);
+
+			// Copy to GPU
+			cmdList->CopyBufferRegion(loadedModel.vertexDefaultBuffers[i], 0, loadedModel.vertexUploadBuffers[i], 0, vbSize);
+			cmdList->CopyBufferRegion(loadedModel.indexDefaultBuffers[i], 0, loadedModel.indexUploadBuffers[i], 0, ibSize);
+
+			// Barrier - transition to final state
+			barrier.Transition.pResource = loadedModel.vertexDefaultBuffers[i];
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+			cmdList->ResourceBarrier(1, &barrier);
+
+			barrier.Transition.pResource = loadedModel.indexDefaultBuffers[i];
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_INDEX_BUFFER;
+			cmdList->ResourceBarrier(1, &barrier);
+		}
+
+	}
+
+	// Execute upload of buffers
+	cmdList->Close();
+	ID3D12CommandList* lists[] = { cmdList };
+	cmdQueue->ExecuteCommandLists(1, lists);
+	flush();
 
 }
 
@@ -236,17 +289,57 @@ ID3D12Resource* PathTracer::makeAccelerationStructure(const D3D12_BUILD_RAYTRACI
 
 
 	auto makeBuffer = [this](UINT64 size, auto initialState) {
-		auto desc = BASIC_BUFFER_DESC;
+		D3D12_RESOURCE_DESC desc = {};
+		desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		desc.Width = size;
+		desc.Height = 1;
+		desc.DepthOrArraySize = 1;
+		desc.MipLevels = 1;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 		desc.Width = size;
 		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 		ID3D12Resource* buffer;
-		d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, initialState, nullptr, IID_PPV_ARGS(&buffer));
+		//d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, initialState, nullptr, IID_PPV_ARGS(&buffer));
+
+		HRESULT hr = d3dDevice->CreateCommittedResource(
+			&DEFAULT_HEAP,
+			D3D12_HEAP_FLAG_NONE,
+			&desc,
+			initialState,
+			nullptr,
+			IID_PPV_ARGS(&buffer)
+		);
+
+		if (FAILED(hr)) {
+			std::cerr << "CreateCommittedResource for AS failed: HRESULT 0x" << std::hex << hr << std::endl;
+			if (hr == E_OUTOFMEMORY) std::cerr << "(Out of memory?)\n";
+			else if (hr == E_INVALIDARG) std::cerr << "(Invalid arg — check desc)\n";
+			return buffer;
+		}
 
 		return buffer;
 		};
 
+	// debug
+	if (inputs.NumDescs == 0 || inputs.pGeometryDescs == nullptr) {
+		std::cerr << "Invalid inputs: no geometry\n";
+		return nullptr;
+	}
+
 	D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo;
 	d3dDevice->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuildInfo);
+
+	// debug
+	std::cout << "Prebuild: scratch=" << prebuildInfo.ScratchDataSizeInBytes
+		<< ", result=" << prebuildInfo.ResultDataMaxSizeInBytes << "\n";
+
+	if (prebuildInfo.ResultDataMaxSizeInBytes == 0 || prebuildInfo.ScratchDataSizeInBytes == 0) {
+		std::cerr << "Prebuild returned zero sizes — invalid geometry!\n";
+		return nullptr;
+	}
 
 	if (updateScratchSize) *updateScratchSize = prebuildInfo.UpdateScratchDataSizeInBytes;
 
@@ -279,13 +372,30 @@ ID3D12Resource* PathTracer::makeBLAS(ID3D12Resource* vertexBuffer, UINT vertexSi
 			.IndexFormat = DXGI_FORMAT_R32_UINT,
 			.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT,
 			.IndexCount = indicesSize,
-			.VertexCount = vertexSize,
+			.VertexCount = indicesSize,
 			.IndexBuffer = indexBuffer->GetGPUVirtualAddress(),
 			.VertexBuffer = {.StartAddress = vertexBuffer->GetGPUVirtualAddress(),
 			.StrideInBytes = sizeof(MeshManager::Vertex)}
 		}
 	};
 
+	if (!vertexBuffer || !indexBuffer) {
+		std::cerr << "Null vertex or index buffer in makeBLAS\n";
+		return nullptr;
+	}
+
+	D3D12_GPU_VIRTUAL_ADDRESS vbAddr = vertexBuffer->GetGPUVirtualAddress();
+	D3D12_GPU_VIRTUAL_ADDRESS ibAddr = indexBuffer->GetGPUVirtualAddress();
+	if (vbAddr == 0 || ibAddr == 0) {
+		std::cerr << "Invalid GPU VA for vertex/index buffer\n";
+		return nullptr;
+	}
+
+	std::cout << "BLAS inputs: verts=" << vertexSize << ", indices=" << indicesSize << "\n";
+	if (vertexSize == 0 || indicesSize == 0 || indicesSize % 3 != 0) {
+		std::cerr << "Invalid mesh counts: verts=" << vertexSize << ", indices=" << indicesSize << "\n";
+		return nullptr;
+	}
 
 	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
 		.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL,
@@ -306,9 +416,16 @@ void PathTracer::initBottomLevel() {
 	// only the first mesh in a model for now
 	// store all bottom level AS in a vector
 	// instance IDs should be in the same order as BLAS creation
+
 	for (MeshManager::LoadedModel loadedModel : loadedModels) {
-		BLAS.emplace_back(makeBLAS(loadedModel.vertexBuffers[0], std::size(loadedModel.meshes[0].vertices), loadedModel.indexBuffers[0], std::size(loadedModel.meshes[0].indices)));
+
+		for (int i = 0; i < loadedModel.meshes.size(); i++) {
+		
+			BLAS.emplace_back(makeBLAS(loadedModel.vertexDefaultBuffers[i], std::size(loadedModel.meshes[i].vertices), loadedModel.indexDefaultBuffers[i], std::size(loadedModel.meshes[i].indices)));
+
+		}
 	}
+
 	NUM_INSTANCES = loadedModels.size(); // this is a guess
 }
 
@@ -331,7 +448,7 @@ ID3D12Resource* PathTracer::makeTLAS(ID3D12Resource* instances, UINT numInstance
 void PathTracer::updateTransforms() {
 
 	auto defaultTransform = DirectX::XMMatrixRotationRollPitchYaw(0, 0, 0);
-	defaultTransform *= DirectX::XMMatrixTranslation(0, 1, 0);
+	defaultTransform *= DirectX::XMMatrixTranslation(0, 0, 0);
 
 	// for each instance apply the default transform
 	for (int i = 0; i < NUM_INSTANCES; i++) {

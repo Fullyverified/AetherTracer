@@ -28,18 +28,20 @@ public:
 
 	struct LoadedModel {
 		std::vector<Mesh> meshes;
-		std::vector<ID3D12Resource*> vertexBuffers;
-		std::vector<ID3D12Resource*> indexBuffers;
+		std::vector<ID3D12Resource*> vertexUploadBuffers;
+		std::vector<ID3D12Resource*> indexUploadBuffers;
+		std::vector<ID3D12Resource*> vertexDefaultBuffers;
+		std::vector<ID3D12Resource*> indexDefaultBuffers;
 	};
 
-	struct UploadBufferTarget {
-		ID3D12Resource* uploadBuffer; // cpu
-		ID3D12Resource* targetBuffer; // gpu
+	struct UploadDefaultBufferPair {
+		ID3D12Resource* HEAP_UPLOAD_BUFFER; // cpu
+		ID3D12Resource* HEAP_DEFAULT_BUFFER; // gpu
 	};
 
 	LoadedModel loadFromObject(const std::string& fileName, bool forceOpaque = true, bool computeNormalsIfMissing = true);
 
-	UploadBufferTarget createBuffers(const void* data, UINT16 byteSize, D3D12_RESOURCE_STATES finalState);
+	UploadDefaultBufferPair createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState);
 
 	ID3D12Device5* d3dDevice;
 	ID3D12GraphicsCommandList4* cmdList;
