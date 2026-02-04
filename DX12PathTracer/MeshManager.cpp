@@ -1,4 +1,4 @@
-#define TINYOBJLOADER_IMPLEMENTATION
+﻿#define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
 #include "MeshManager.h"
@@ -12,7 +12,7 @@
 #include <unordered_map>
 
 
-MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName, bool forceOpaque, bool computeNormalsIfMissing) {
+MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName, Vector3 position, Vector3 rotation, bool forceOpaque, bool computeNormalsIfMissing) {
 
 	tinyobj::attrib_t attrib;
 	std::vector<tinyobj::shape_t> shapes;
@@ -29,8 +29,8 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
         &err,
         fileName.c_str(),           // filename
         nullptr,                    // mtl_basedir = nullptr (no separate .mtl folder)
-        true,                       // triangulate = true (strongly recommended!)
-        true                        // default_vcols_fallback = true
+        false,                       // triangulate = true (strongly recommended!)
+        false                        // default_vcols_fallback = true
     );
 
     if (!warn.empty()) std::cerr << "tinyobj warning: " << warn << std::endl;
@@ -45,7 +45,7 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
         Mesh mesh;
         mesh.name = shape.name;
 
-        //std::vector<Vertex> uniqueVertices;
+        std::unordered_map<VertexKey, uint32_t> uniqueVertices;
 
         for (const auto& index : shape.mesh.indices) {
             Vertex vertex{};
@@ -77,41 +77,29 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
                 };
             }
 
-
-            //mesh.vertices.push_back(vertex);
-            //mesh.indices.push_back(mesh.vertices.size()-1);
-
             // deduplication
-
-            if (mesh.vertices.empty()) {
-                mesh.vertices.push_back(vertex);
-                mesh.indices.push_back(0);
-                continue;
-            }
-
-            for (int i = 0; i < mesh.vertices.size(); i++) {
-                auto uniqueVertex = mesh.vertices[i];
-
-                if (vertex.position.x == uniqueVertex.position.x && vertex.position.y == uniqueVertex.position.y && vertex.position.z == uniqueVertex.position.z) {
-                    // vertex already exists
-                    mesh.indices.push_back(i);
-                    break;
-                }
-                if (i == mesh.vertices.size() - 1) {
-                    // end of list - vertice doesnt exist
-                    mesh.vertices.push_back(vertex);
-                    mesh.indices.push_back(mesh.vertices.size()-1);
-                    break;
-                }
-            } 
+            VertexKey vertexKey{vertex.position.x, vertex.position.y, vertex.position.z, vertex.normal.x, vertex.normal.y, vertex.normal.z, vertex.texcoord.x, vertex.texcoord.y };
             
+            auto it = uniqueVertices.find(vertexKey);
+            if (it == uniqueVertices.end()) {
+                uint32_t newIdx = static_cast<uint32_t>(mesh.vertices.size());
+                mesh.vertices.push_back(vertex);
+                uniqueVertices[vertexKey] = newIdx;
+                mesh.indices.push_back(newIdx);
+            }
+            else {
+                mesh.indices.push_back(it->second);
+            }
 
         }
     
+        std::cout << "Mesh has " << mesh.vertices.size() << " verts, " << mesh.indices.size() << " indices" << std::endl;
+      
         // compute normals if missing
         // later
 
-
+        model.position = position;
+        model.rotation = rotation;
         model.meshes.push_back(std::move(mesh));
 
     }
@@ -119,9 +107,11 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
     std::cout << "Creating upload and default buffers" << std::endl;
 
     // create upload and default buffers and store them
+
+    uint32_t num_vertices = 0;
     for (auto& mesh : model.meshes) {
     
-        
+        num_vertices += mesh.vertices.size();
 
         size_t vbSize = mesh.vertices.size() * sizeof(MeshManager::Vertex);
         size_t ibSize = mesh.indices.size() * sizeof(uint32_t);
@@ -140,6 +130,8 @@ MeshManager::LoadedModel MeshManager::loadFromObject(const std::string& fileName
 
     }
 
+
+    std::cout << "num vertices: " << num_vertices << std::endl;
     return model;
 }
 

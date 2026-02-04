@@ -37,6 +37,7 @@ public:
 	void updateTransforms();
 	void initScene();
 	void initTopLevel();
+	void initDescriptors();
 	void initRootSignature();
 	void initPipeline();
 	void initShaderTables();
@@ -44,6 +45,8 @@ public:
 	void render();
 
 	void quit();
+
+	void checkHR(HRESULT hr, std::string context);
 
 	ID3D12Resource* makeAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, UINT64* updateScratchSize = nullptr);
 	ID3D12Resource* makeBLAS(ID3D12Resource* vertexBuffer, UINT vertexSize, ID3D12Resource* indexBuffer, UINT indicesSize);
@@ -69,7 +72,7 @@ public:
 
 	// swap chain and uav
 	IDXGISwapChain3* swapChain;
-	ID3D12DescriptorHeap* uavHeap;
+	//ID3D12DescriptorHeap* uavHeap;
 
 	// render target
 	ID3D12Resource* renderTarget;
@@ -78,6 +81,13 @@ public:
 
 	ID3D12CommandAllocator* cmdAlloc; // block of memory
 	ID3D12GraphicsCommandList4* cmdList;
+
+	// vertex, index buffers and SRVs
+	ID3D12DescriptorHeap* descHeap;
+	UINT descriptorIncrementSize;
+	std::vector<ID3D12Resource*> allVertexBuffers;
+	std::vector<ID3D12Resource*> allIndexBuffers;
+
 
 	// meshes
 
@@ -110,4 +120,3 @@ public:
 	MeshManager* meshManager;
 
 };
-
