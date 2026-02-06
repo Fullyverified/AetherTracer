@@ -1,9 +1,12 @@
 #pragma once
 
-#include <DirectXMath.h> // For XMMATRIX
-#include <d3d12.h>
 #include <vector>
 #include <iostream>
+#include <unordered_map>
+#include <string>
+#include <unordered_set>
+#include "Vector.h"
+
 
 struct VertexKey {
 	float px, py, pz;
@@ -17,6 +20,7 @@ struct VertexKey {
 			std::abs(tu - other.tu) < eps && std::abs(tv - other.tv) < eps;
 	}
 };
+
 
 // weird hashmap magic thanks grok
 namespace std {
@@ -35,27 +39,16 @@ namespace std {
 	};
 }
 
-
-
-struct Vector3 {
-
-	Vector3(float x, float y, float z) : x(x), y(y), z(z) {};
-	Vector3() : x(0), y(0), z(0) {};
-
-	float x, y, z;
-
-};
-
 class MeshManager {
 public:
 
-	MeshManager(ID3D12Device5* d3dDevice, ID3D12GraphicsCommandList4* cmdList) : d3dDevice(d3dDevice), cmdList(cmdList) {}
+	MeshManager() {}
 	~MeshManager() {}
 
 	struct Vertex {
-		DirectX::XMFLOAT3 position;
-		DirectX::XMFLOAT3 normal;
-		DirectX::XMFLOAT2 texcoord;
+		PT::Vector3 position;
+		PT::Vector3 normal;
+		PT::Vector2 texcoord;
 		uint32_t materialIndex;
 	};
 
@@ -63,35 +56,30 @@ public:
 		std::vector<Vertex> vertices;
 		std::vector<uint32_t> indices;
 		std::string name;
-		DirectX::XMFLOAT3A boundsMin, boundsMax;
+		PT::Vector3 boundsMin, boundsMax;
 		uint32_t materialIndex;
 	};
 
 	struct LoadedModel {
+
+		LoadedModel(std::string name) : name(name) {};
+
+		std::string name;
 		std::vector<Mesh> meshes;
-		std::vector<ID3D12Resource*> vertexUploadBuffers;
-		std::vector<ID3D12Resource*> indexUploadBuffers;
-		std::vector<ID3D12Resource*> vertexDefaultBuffers;
-		std::vector<ID3D12Resource*> indexDefaultBuffers;
-		Vector3 position;
-		Vector3 rotation;
-
 	};
 
-	struct UploadDefaultBufferPair {
-		ID3D12Resource* HEAP_UPLOAD_BUFFER; // cpu
-		ID3D12Resource* HEAP_DEFAULT_BUFFER; // gpu
-	};
 
+	void initMeshes();
+
+	void loadFromObject(const std::string& fileName, bool forceOpaque = false, bool computeNormalsIfMissing = false);
+
+	void cleanUp();
 	
-	LoadedModel loadFromObject(const std::string& fileName, Vector3 position = { 0, 0, 0 }, Vector3 rotation = {0, 0, 0}, bool forceOpaque = false, bool computeNormalsIfMissing = false);
+	std::unordered_map<std::string, MeshManager::LoadedModel*> loadedModels;
 
-	UploadDefaultBufferPair createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState);
+	std::unordered_set<std::string> uniqueModels;
 
-	ID3D12Device5* d3dDevice;
-	ID3D12GraphicsCommandList4* cmdList;
 
-	
+};	
 
-};
 

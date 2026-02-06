@@ -133,8 +133,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Main.cpp" />
+    <ClCompile Include="MaterialManager.cpp" />
     <ClCompile Include="MeshManager.cpp" />
     <ClCompile Include="PathTracer.cpp" />
+    <ClCompile Include="SceneManager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="shader.hlsl">
@@ -142,11 +144,21 @@
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">6.3</ShaderModel>
       <VariableName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">compiledShader</VariableName>
       <HeaderFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">shader.fxh</HeaderFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">6.8</ShaderModel>
+      <EnableDebuggingInformation Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</EnableDebuggingInformation>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Library</ShaderType>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+      </AdditionalOptions>
+      <FileType>Document</FileType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">"$$ (WindowsSdkDir)bin\\[  (WindowsTargetPlatformVersion)\x64\dxc.exe" "  \](FullPath)" -T lib_6_8 -Zi -Od -Qembed_debug -Fh " $$(IntDir)%(Filename).h" -Vn g_%(Filename)</Command>
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="MaterialManager.h" />
     <ClInclude Include="MeshManager.h" />
     <ClInclude Include="PathTracer.h" />
+    <ClInclude Include="SceneManager.h" />
+    <ClInclude Include="Vector.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

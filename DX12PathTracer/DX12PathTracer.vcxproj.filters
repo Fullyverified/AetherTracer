@@ -27,9 +27,12 @@
     <ClCompile Include="MeshManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <FxCompile Include="shader.hlsl" />
+    <ClCompile Include="MaterialManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="PathTracer.h">
@@ -38,5 +41,17 @@
     <ClInclude Include="MeshManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="MaterialManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Vector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="shader.hlsl" />
   </ItemGroup>
 </Project>

@@ -14,9 +14,39 @@
 #pragma comment(lib, "dxgi")   // Another enigma
 
 #include "MeshManager.h"
+#include "MaterialManager.h"
+#include "SceneManager.h"
+#include "Vector.h"
 
 class PathTracer {
 public:
+
+	struct VertexIndexBuffers {
+		std::vector<ID3D12Resource*> vertexUploadBuffers;
+		std::vector<ID3D12Resource*> indexUploadBuffers;
+		std::vector<ID3D12Resource*> vertexDefaultBuffers;
+		std::vector<ID3D12Resource*> indexDefaultBuffers;
+	};
+
+	struct UploadDefaultBufferPair {
+		ID3D12Resource* HEAP_UPLOAD_BUFFER; // cpu
+		ID3D12Resource* HEAP_DEFAULT_BUFFER; // gpu
+	};
+
+	struct DX12Model {
+		DX12Model() : loadedModel(nullptr), BLAS(nullptr), modelBuffers(nullptr) {};
+
+		MeshManager::LoadedModel* loadedModel; // mesh and raw vertex data
+		ID3D12Resource* BLAS;
+		VertexIndexBuffers* modelBuffers; // DX12 buffers - Upload refers to CPU, Default refers to GPU
+	};
+
+	struct DX12SceneObject {
+		DX12SceneObject() : sceneObject(nullptr), model(nullptr) {};
+
+		SceneManager::SceneObject* sceneObject; // name, position, rotation
+		DX12Model* model;
+	};
 
 	PathTracer() {}
 
@@ -32,8 +62,8 @@ public:
 	void initSurfaces(HWND hwnd);
 	void resize(HWND hwnd);
 	void initCommand();
-	void initMeshes();
-	void initBottomLevel();
+	void initModelBuffers();
+	void initModelBLAS();
 	void updateTransforms();
 	void initScene();
 	void initTopLevel();
@@ -46,10 +76,10 @@ public:
 
 	void quit();
 
-	void checkHR(HRESULT hr, std::string context);
+	void checkHR(HRESULT hr, ID3DBlob* errorblob, std::string context);
 
+	UploadDefaultBufferPair createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState);
 	ID3D12Resource* makeAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, UINT64* updateScratchSize = nullptr);
-	ID3D12Resource* makeBLAS(ID3D12Resource* vertexBuffer, UINT vertexSize, ID3D12Resource* indexBuffer, UINT indicesSize);
 	ID3D12Resource* makeTLAS(ID3D12Resource* instances, UINT numInstances, UINT64* updateScratchSize);
 
 	DXGI_SAMPLE_DESC NO_AA = { .Count = 1, .Quality = 0 };
@@ -88,16 +118,11 @@ public:
 	std::vector<ID3D12Resource*> allVertexBuffers;
 	std::vector<ID3D12Resource*> allIndexBuffers;
 
+	// scene object resources - including per model blas
+	std::vector<DX12SceneObject*> dx12SceneObjects;
+	std::unordered_map<std::string, DX12Model*> dx12Models;
 
-	// meshes
-
-	std::vector<MeshManager::LoadedModel> loadedModels;
-
-	// accel structures
-	ID3D12Resource* quadBlas;
-	ID3D12Resource* cubeBlas;
-	std::vector<ID3D12Resource*> BLAS;
-
+	// acceleration structure
 	ID3D12Resource* tlas;
 	ID3D12Resource* tlasUpdateScratch;
 
@@ -118,5 +143,7 @@ public:
 
 	// managers
 	MeshManager* meshManager;
+	MaterialManager* materialManager;
+	SceneManager* sceneManager;
 
 };

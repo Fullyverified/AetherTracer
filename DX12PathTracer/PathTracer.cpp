@@ -90,10 +90,14 @@ void PathTracer::init(HWND hwnd) {
 	initSurfaces(hwnd);
 	initCommand();
 
-	meshManager = new MeshManager(d3dDevice, cmdList);
+	sceneManager = new SceneManager();
+	sceneManager->initScene();
+	meshManager = new MeshManager();
+	meshManager->initMeshes();
+	materialManager = new MaterialManager();
 
-	initMeshes();
-	initBottomLevel();
+	initModelBuffers();
+	initModelBLAS();
 	initScene();
 	initTopLevel();
 	initDescriptors();
@@ -157,7 +161,7 @@ void PathTracer::initSurfaces(HWND hwnd) {
 	IDXGISwapChain1* swapChain1;
 
 	HRESULT hr = factory->CreateSwapChainForHwnd(cmdQueue, hwnd, &scDesc, nullptr, nullptr, &swapChain1);
-	checkHR(hr, "Create swap chain: ");
+	checkHR(hr, nullptr, "Create swap chain: ");
 
 
 	swapChain1->QueryInterface(&swapChain);
@@ -222,60 +226,153 @@ void PathTracer::initCommand() {
 	d3dDevice->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&cmdList));
 }
 
+// create default heap buffer
+PathTracer::UploadDefaultBufferPair PathTracer::createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState) {
+	std::cout << "byteSize: " << byteSize << std::endl;
+
+
+	// CPU Buffer (upload buffer)
+	DXGI_SAMPLE_DESC NO_AA = { .Count = 1, .Quality = 0 };
+	D3D12_RESOURCE_DESC DESC = {
+		.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+		.Width = byteSize,
+		.Height = 1,
+		.DepthOrArraySize = 1,
+		.MipLevels = 1,
+		.SampleDesc = NO_AA,
+		.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+		.Flags = D3D12_RESOURCE_FLAG_NONE,
+	};
+	D3D12_HEAP_PROPERTIES UPLOAD_HEAP = { .Type = D3D12_HEAP_TYPE_UPLOAD };
+
+
+	ID3D12Resource* upload;
+	d3dDevice->CreateCommittedResource(
+		&UPLOAD_HEAP,
+		D3D12_HEAP_FLAG_NONE,
+		&DESC,
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&upload)
+	);
+
+	void* mapped;
+	upload->Map(0, nullptr, &mapped); // mapped now points to the upload buffer
+	memcpy(mapped, data, byteSize); // copy data to upload buffer
+	upload->Unmap(0, nullptr); // 7
+
+	// VRAM Buffer
+
+	D3D12_HEAP_PROPERTIES DEFAULT_HEAP = { .Type = D3D12_HEAP_TYPE_DEFAULT };
+
+	// Create target buffer in DEFAULT heap
+	DESC.Flags = D3D12_RESOURCE_FLAG_NONE; // or ALLOW_UNORDERED_ACCESS if needed later
+	ID3D12Resource* target = nullptr;
+	d3dDevice->CreateCommittedResource(
+		&DEFAULT_HEAP,
+		D3D12_HEAP_FLAG_NONE,
+		&DESC,
+		D3D12_RESOURCE_STATE_COMMON,
+		nullptr,
+		IID_PPV_ARGS(&target)
+	);
+
+	return { upload, target };
+}
+
 // meshes
 
-void PathTracer::initMeshes() {
+void PathTracer::initModelBuffers() {
 
-	loadedModels.emplace_back(meshManager->loadFromObject("assets/meshes/companionCubeLow.obj", Vector3{-1.5, 0, 0}, Vector3(0, 0, 0)));
-	loadedModels.emplace_back(meshManager->loadFromObject("assets/meshes/companionCubeLow.obj", Vector3{0, 0, 0 }, Vector3(0, 0, 0)));
-	loadedModels.emplace_back(meshManager->loadFromObject("assets/meshes/companionCubeLow.obj", Vector3{1.5, 0, 0 }, Vector3(0, 0, 0)));
+	// for vertex and index buffer SRVs
 
+	std::cout << "Creating upload and default buffers" << std::endl;
+
+	// create upload and default buffers and store them
+	for (auto& [name, loadedModel] : meshManager->loadedModels) {
+		
+		VertexIndexBuffers* buffers = new VertexIndexBuffers{};
+		DX12Model* dx12Model = new DX12Model{};
+		dx12Model->modelBuffers = buffers;
+		dx12Model->loadedModel = loadedModel;
+		dx12Models[loadedModel->name] = dx12Model;
+
+		for (size_t i = 0; i < loadedModel->meshes.size(); i++) {
+
+			MeshManager::Mesh mesh = loadedModel->meshes[i];
+
+			size_t vbSize = mesh.vertices.size() * sizeof(MeshManager::Vertex);
+			size_t ibSize = mesh.indices.size() * sizeof(uint32_t);
+			std::cout << ": vbSize=" << vbSize << " bytes, ibSize=" << ibSize << " bytes" << std::endl;
+
+			auto vbUpload = createBuffers(mesh.vertices.data(), vbSize, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+			auto ibUpload = createBuffers(mesh.indices.data(), ibSize, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+
+			// CPU memory buffers = HEAP_UPLOAD
+			// GPU memory buffers = HEAP_DEFAULT
+
+			buffers->vertexUploadBuffers.push_back(vbUpload.HEAP_UPLOAD_BUFFER);
+			buffers->vertexDefaultBuffers.push_back(vbUpload.HEAP_DEFAULT_BUFFER);
+			buffers->indexUploadBuffers.push_back(ibUpload.HEAP_UPLOAD_BUFFER);
+			buffers->indexDefaultBuffers.push_back(ibUpload.HEAP_DEFAULT_BUFFER);
+		}
+
+	}
+
+	
 	// Reset cmdList and cmdAllc
 	cmdAlloc->Reset();
 	cmdList->Reset(cmdAlloc, nullptr);
 
 	std::cout << "Pushing buffers to VRAM" << std::endl;
 
-	for (MeshManager::LoadedModel loadedModel : loadedModels) {
+	for (auto& [name, dx12Model] : dx12Models) {
 
-		for (int i = 0; i < loadedModel.meshes.size(); i++) {
-			MeshManager::Mesh mesh = loadedModel.meshes[i];
+		std::cout << "first model: " << dx12Model->loadedModel->name << std::endl;
+
+		std::vector<MeshManager::Mesh>& meshes = dx12Model->loadedModel->meshes;
+
+		for (size_t i = 0; i < dx12Model->loadedModel->meshes.size(); i++) {
+
+			MeshManager::Mesh& mesh = dx12Model->loadedModel->meshes[i];
 
 			size_t vbSize = mesh.vertices.size() * sizeof(MeshManager::Vertex);
 			size_t ibSize = mesh.indices.size() * sizeof(uint32_t);
 
-			std::cout << "Mesh " << i << ": vbSize=" << vbSize << " bytes, ibSize=" << ibSize << " bytes\n";
-			
+			std::cout << "Mesh " << i << ": vbSize=" << vbSize << " bytes, ibSize=" << ibSize << " bytes\n" << std::endl;
+
 			// Barrier - transition vertex target to COPY_DEST
 			D3D12_RESOURCE_BARRIER barrier = {};
 			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 			barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-			barrier.Transition.pResource = loadedModel.vertexDefaultBuffers[i];
+			barrier.Transition.pResource = dx12Model->modelBuffers->vertexDefaultBuffers[i];
 			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
 			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
 			barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 			cmdList->ResourceBarrier(1, &barrier);
 
 			// transition index buffer
-			barrier.Transition.pResource = loadedModel.indexDefaultBuffers[i];
+			barrier.Transition.pResource = dx12Model->modelBuffers->indexDefaultBuffers[i];
 			cmdList->ResourceBarrier(1, &barrier);
 
 			// Copy to GPU
-			cmdList->CopyBufferRegion(loadedModel.vertexDefaultBuffers[i], 0, loadedModel.vertexUploadBuffers[i], 0, vbSize);
-			cmdList->CopyBufferRegion(loadedModel.indexDefaultBuffers[i], 0, loadedModel.indexUploadBuffers[i], 0, ibSize);
+			cmdList->CopyBufferRegion(dx12Model->modelBuffers->vertexDefaultBuffers[i], 0, dx12Model->modelBuffers->vertexUploadBuffers[i], 0, vbSize);
+			cmdList->CopyBufferRegion(dx12Model->modelBuffers->indexDefaultBuffers[i], 0, dx12Model->modelBuffers->indexUploadBuffers[i], 0, ibSize);
 
 			// Barrier - transition to final state
-			barrier.Transition.pResource = loadedModel.vertexDefaultBuffers[i];
+			barrier.Transition.pResource = dx12Model->modelBuffers->vertexDefaultBuffers[i];
 			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
 			cmdList->ResourceBarrier(1, &barrier);
 
-			barrier.Transition.pResource = loadedModel.indexDefaultBuffers[i];
+			barrier.Transition.pResource = dx12Model->modelBuffers->indexDefaultBuffers[i];
 			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_INDEX_BUFFER;
 			cmdList->ResourceBarrier(1, &barrier);
-		}
 
+		}
+	
 	}
+
 
 	// Execute upload of buffers
 	cmdList->Close();
@@ -303,7 +400,6 @@ ID3D12Resource* PathTracer::makeAccelerationStructure(const D3D12_BUILD_RAYTRACI
 		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 		desc.Width = size;
 		ID3D12Resource* buffer;
-		//d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, initialState, nullptr, IID_PPV_ARGS(&buffer));
 
 		HRESULT hr = d3dDevice->CreateCommittedResource(
 			&DEFAULT_HEAP,
@@ -314,7 +410,7 @@ ID3D12Resource* PathTracer::makeAccelerationStructure(const D3D12_BUILD_RAYTRACI
 			IID_PPV_ARGS(&buffer)
 		);
 
-		checkHR(hr, "CreateCommittedResource for AS failed");
+		checkHR(hr, nullptr, "CreateCommittedResource for AS failed");
 
 		return buffer;
 		};
@@ -342,8 +438,13 @@ ID3D12Resource* PathTracer::makeAccelerationStructure(const D3D12_BUILD_RAYTRACI
 	auto* scratch = makeBuffer(prebuildInfo.ScratchDataSizeInBytes, D3D12_RESOURCE_STATE_COMMON);
 	auto* as = makeBuffer(prebuildInfo.ResultDataMaxSizeInBytes, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
 
+	if (scratch == nullptr) std::cout << "scratch nullptr" << std::endl;
+	if (as == nullptr) std::cout << "BLAS nullptr" << std::endl;
+
 	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {
 	.DestAccelerationStructureData = as->GetGPUVirtualAddress(), .Inputs = inputs, .ScratchAccelerationStructureData = scratch->GetGPUVirtualAddress() };
+
+	std::cout <<"executing cmd list " << std::endl;
 
 	cmdAlloc->Reset();
 	cmdList->Reset(cmdAlloc, nullptr);
@@ -359,71 +460,50 @@ ID3D12Resource* PathTracer::makeAccelerationStructure(const D3D12_BUILD_RAYTRACI
 
 // BLAS
 
-ID3D12Resource* PathTracer::makeBLAS(ID3D12Resource* vertexBuffer, UINT vertexSize, ID3D12Resource* indexBuffer, UINT indicesSize) {
-
-	D3D12_RAYTRACING_GEOMETRY_DESC geometryDesc = {
-		.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES,
-		.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE,
-		.Triangles = {.Transform3x4 = 0,
-			.IndexFormat = DXGI_FORMAT_R32_UINT,
-			.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT,
-			.IndexCount = indicesSize,
-			.VertexCount = vertexSize,
-			.IndexBuffer = indexBuffer->GetGPUVirtualAddress(),
-			.VertexBuffer = {.StartAddress = vertexBuffer->GetGPUVirtualAddress(),
-			.StrideInBytes = sizeof(MeshManager::Vertex)}
-		}
-	};
-
-	if (!vertexBuffer || !indexBuffer) {
-		std::cerr << "Null vertex or index buffer in makeBLAS\n";
-		return nullptr;
-	}
-
-	D3D12_GPU_VIRTUAL_ADDRESS vbAddr = vertexBuffer->GetGPUVirtualAddress();
-	D3D12_GPU_VIRTUAL_ADDRESS ibAddr = indexBuffer->GetGPUVirtualAddress();
-	if (vbAddr == 0 || ibAddr == 0) {
-		std::cerr << "Invalid GPU VA for vertex/index buffer\n";
-		return nullptr;
-	}
-
-	std::cout << "BLAS inputs: verts=" << vertexSize << ", indices=" << indicesSize << "\n";
-	if (vertexSize == 0 || indicesSize == 0 || indicesSize % 3 != 0) {
-		std::cerr << "Invalid mesh counts: verts=" << vertexSize << ", indices=" << indicesSize << "\n";
-		return nullptr;
-	}
-
-	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
-		.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL,
-		.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE,
-		.NumDescs = 1,
-		.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
-		.pGeometryDescs = &geometryDesc };
-
-
-	return makeAccelerationStructure(inputs);
-
-}
-
-void PathTracer::initBottomLevel() {
+void PathTracer::initModelBLAS() {
 
 	if (debug) std::cout << "initBottomLevel()" << std::endl;
 
-	BLAS.clear();
+	for (auto& [name, model] : dx12Models) {
+	
+		delete model->BLAS;
 
-	// only the first mesh in a model for now
-	// store all bottom level AS in a vector
-	// instance IDs should be in the same order as BLAS creation
+		std::cout << "object name: " << name << std::endl;
 
-	NUM_INSTANCES = 0; // num meshes
-	for (MeshManager::LoadedModel loadedModel : loadedModels) {
+		std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> geomDescs;
+		
+		for (size_t i = 0; i < model->modelBuffers->vertexDefaultBuffers.size(); i++) {
 
-		for (int i = 0; i < loadedModel.meshes.size(); i++) {
-
-			BLAS.emplace_back(makeBLAS(loadedModel.vertexDefaultBuffers[i], loadedModel.meshes[i].vertices.size(), loadedModel.indexDefaultBuffers[i], loadedModel.meshes[i].indices.size()));
-			NUM_INSTANCES++;
+			D3D12_RAYTRACING_GEOMETRY_DESC geometryDesc = {};
+			geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+			geometryDesc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+			geometryDesc.Triangles.VertexBuffer.StartAddress = model->modelBuffers->vertexDefaultBuffers[i]->GetGPUVirtualAddress();
+			geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(MeshManager::Vertex);
+			geometryDesc.Triangles.VertexCount = model->loadedModel->meshes[i].vertices.size();
+			geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+			geometryDesc.Triangles.IndexBuffer = model->modelBuffers->indexDefaultBuffers[i]->GetGPUVirtualAddress();
+			geometryDesc.Triangles.IndexCount = model->loadedModel->meshes[i].indices.size();
+			geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R32_UINT;
+			geomDescs.push_back(geometryDesc);
 		}
+
+		std::cout << "making accel struc inputs: " << std::endl;
+
+
+		D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
+			.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL,
+			.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE,
+			.NumDescs = static_cast<UINT>(geomDescs.size()),
+			.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
+			.pGeometryDescs = geomDescs.data() };
+
+		std::cout << "making accel struc " << std::endl;
+
+		model->BLAS = makeAccelerationStructure(inputs);
+
 	}
+
+	
 }
 
 // TLAS
@@ -444,52 +524,88 @@ ID3D12Resource* PathTracer::makeTLAS(ID3D12Resource* instances, UINT numInstance
 
 void PathTracer::updateTransforms() {
 
-	if (debug) std::cout << "Update Transforms" << std::endl;
+	//if (debug) std::cout << "Update Transforms" << std::endl;
 
 	auto time = static_cast<float>(GetTickCount64()) / 1000;
 
 	size_t currentInstance = 0;
 
 	// apply meshes stored transform
-	for (size_t i = 0; i < loadedModels.size(); i++) {
+ 
+	for (DX12SceneObject* dx12SceneObject : dx12SceneObjects) {
 
-		auto vecRotation = loadedModels[i].rotation;
-		auto vecPosition = loadedModels[i].position;
-
+		auto vecRotation = dx12SceneObject->sceneObject->rotation;
+		auto vecPosition = dx12SceneObject->sceneObject->position;
+	
 		auto transform = DirectX::XMMatrixRotationRollPitchYaw(vecRotation.x, vecRotation.y, vecRotation.z);
 		transform = DirectX::XMMatrixRotationRollPitchYaw(time / 2, time / 3, time / 5);
 		transform *= DirectX::XMMatrixTranslation(vecPosition.x, vecPosition.y, vecPosition.z);
 
-		for (size_t j = 0; j < loadedModels[i].meshes.size(); j++) {
-			auto* ptr = reinterpret_cast<DirectX::XMFLOAT3X4*>(&instanceData[currentInstance].Transform);
-			XMStoreFloat3x4(ptr, transform);
-			currentInstance++;
-		}
+		auto* ptr = reinterpret_cast<DirectX::XMFLOAT3X4*>(&instanceData[currentInstance].Transform);
+		XMStoreFloat3x4(ptr, transform);
+		currentInstance++;
 
 	}
-	
 
 }
 
 void PathTracer::initScene() {
 
-	auto instancesDesc = BASIC_BUFFER_DESC;
+	if (debug) std::cout << "initScene()" << std::endl;
+
+	for (size_t i = 0; i < sceneManager->sceneObjects.size(); i++) {
+
+		if (debug) std::cout << "creating DX12SceneObject*" << std::endl;
+		DX12SceneObject* dx12Object = new DX12SceneObject{};
+		if (debug) std::cout << "assigning sceneObject" << std::endl;
+		dx12Object->sceneObject = sceneManager->sceneObjects[i];
+		if (debug) std::cout << "assigning model" << std::endl;
+		dx12Object->model = dx12Models[sceneManager->sceneObjects[i]->name];
+	
+		dx12SceneObjects.push_back(dx12Object);
+	}
+	
+	if (debug) std::cout << "creating instances" << std::endl;
+
+	// create instances
+	
+	NUM_INSTANCES = dx12SceneObjects.size();
+	
+	D3D12_RESOURCE_DESC instancesDesc{};
+	instancesDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
 	instancesDesc.Width = sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * NUM_INSTANCES;
+	instancesDesc.Height = 1;
+	instancesDesc.DepthOrArraySize = 1;
+	instancesDesc.MipLevels = 1;
+	instancesDesc.SampleDesc = NO_AA;
+	instancesDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
 	HRESULT hr = d3dDevice->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &instancesDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&instances));
-	checkHR(hr, "initScene, CreateComittedResource: ");
+	checkHR(hr, nullptr, "initScene, CreateComittedResource: ");
 	
 	instances->Map(0, nullptr, reinterpret_cast<void**>(&instanceData));
 
 	if (debug) std::cout << "init scene" << std::endl;
 
-	// if instance number and BLAS creation align
-	for (UINT i = 0; i < NUM_INSTANCES; i++) {
-		instanceData[i] = {
-		.InstanceID = i,
-		.InstanceMask = 1,
-		.AccelerationStructure = BLAS[i]->GetGPUVirtualAddress(),
-		};
+	uint32_t currentInstance = 0;
+	for (DX12SceneObject* dx12SceneObject : dx12SceneObjects) {
+
+		if (dx12SceneObject->model->BLAS == nullptr) std::cout << "BLAS nullptr " << std::endl;
+
+		ID3D12Resource* objectBlas = dx12SceneObject->model->BLAS;
+		objectBlas->GetGPUVirtualAddress();
+
+		instanceData[currentInstance] = {
+			.InstanceID = static_cast<UINT>(currentInstance),
+			.InstanceMask = 1,
+			.InstanceContributionToHitGroupIndex = 0,
+			.Flags = 0,
+			.AccelerationStructure = objectBlas->GetGPUVirtualAddress(),
+			};
+		currentInstance++;
+		
 	}
+
 	updateTransforms();
 
 }
@@ -506,7 +622,7 @@ void PathTracer::initTopLevel() {
 	desc.Width = std::max(updateScratchSize, 8ULL);
 	desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 	HRESULT hr = d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&tlasUpdateScratch));
-	checkHR(hr, "initTopLevel: CreateCommittedResource");
+	checkHR(hr, nullptr, "initTopLevel: CreateCommittedResource");
 }
 
 // bind 
@@ -519,15 +635,23 @@ void PathTracer::initDescriptors() {
 
 	allVertexBuffers.clear();
 	allIndexBuffers.clear();
-	for (const auto& model : loadedModels) {
-		for (size_t i = 0; i < model.meshes.size(); i++) {
-			allVertexBuffers.push_back(model.vertexDefaultBuffers[i]);
-			allIndexBuffers.push_back(model.indexDefaultBuffers[i]);
+
+	for (DX12SceneObject* dx12SceneObject : dx12SceneObjects) {
+
+		auto* buffers = dx12SceneObject->model->modelBuffers;
+		size_t bufferSize = buffers->vertexDefaultBuffers.size();
+
+		for (size_t i = 0; i < bufferSize; i++) {
+			allVertexBuffers.push_back(buffers->vertexDefaultBuffers[i]);
+			allIndexBuffers.push_back(buffers->indexDefaultBuffers[i]);
 		}
 	}
 
+	size_t numBuffers = allVertexBuffers.size();
+
 	// Heap size: 1 UAV (render target) + 1 SRV (scene), + NUM_INSTANCES * (vertex srvs, index srvs)
-	UINT numDescriptors = 2 + 2 * NUM_INSTANCES;
+
+	UINT numDescriptors = 2 + numBuffers * 2;
 	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {
 		.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
 		.NumDescriptors = numDescriptors,
@@ -535,7 +659,9 @@ void PathTracer::initDescriptors() {
 	};
 
 	HRESULT hr = d3dDevice->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&descHeap));
-	checkHR(hr, "CreateDescriptorHeap");
+	checkHR(hr, nullptr, "CreateDescriptorHeap");
+
+	if (debug) std::cout << "creating SRVs" << std::endl;
 
 	// Create views
 	D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = descHeap->GetCPUDescriptorHandleForHeapStart();
@@ -585,15 +711,15 @@ void PathTracer::initDescriptors() {
 		std::cout << "srvNumElementsIndex: " << srvDesc.Buffer.NumElements << std::endl;
 	}
 
-
 }
-
 
 // root signature
 
 void PathTracer::initRootSignature() {
 
 	if (debug) std::cout << "initRootSignature()" << std::endl;
+
+	UINT NUM_BUFFERS = allVertexBuffers.size();
 
 	D3D12_DESCRIPTOR_RANGE uavRange = {
 	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
@@ -613,7 +739,7 @@ void PathTracer::initRootSignature() {
 
 	D3D12_DESCRIPTOR_RANGE vertexRange = {
 	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-	.NumDescriptors = NUM_INSTANCES,
+	.NumDescriptors = NUM_BUFFERS,
 	.BaseShaderRegister = 1,
 	.RegisterSpace = 1,
 	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
@@ -621,18 +747,18 @@ void PathTracer::initRootSignature() {
 
 	D3D12_DESCRIPTOR_RANGE indexRange = {
 	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-	.NumDescriptors = NUM_INSTANCES,
+	.NumDescriptors = NUM_BUFFERS,
 	.BaseShaderRegister = 2,
 	.RegisterSpace = 2,
 	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 	};
+
 
 	D3D12_ROOT_PARAMETER params[4] = {												// num desriptor ranges, descriptor range
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &uavRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &sceneRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &vertexRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &indexRange}},
-
 	};
 
 	D3D12_ROOT_SIGNATURE_DESC desc = {
@@ -642,12 +768,13 @@ void PathTracer::initRootSignature() {
 	};
 
 	ID3DBlob* blob;
-	HRESULT hr = D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1_0, &blob, nullptr);
-	checkHR(hr, "D3D12SerializeRootSignature: ");
+	ID3DBlob* errorblob;
+	HRESULT hr = D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1_0, &blob, &errorblob);
+	checkHR(hr, nullptr, "D3D12SerializeRootSignature: ");
 
 
 	hr = d3dDevice->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rootSignature));
-	checkHR(hr, "CreateRootSignature: ");
+	checkHR(hr, errorblob, "CreateRootSignature: ");
 
 	blob->Release();
 
@@ -691,7 +818,7 @@ void PathTracer::initPipeline() {
 		.NumSubobjects = std::size(subobjects),
 		.pSubobjects = subobjects };
 	HRESULT hr = d3dDevice->CreateStateObject(&desc, IID_PPV_ARGS(&pso));
-	checkHR(hr, "initPipeLine, CreateStateObject: ");
+	checkHR(hr, nullptr, "initPipeLine, CreateStateObject: ");
 
 }
 
@@ -704,7 +831,7 @@ void PathTracer::initShaderTables() {
 	auto idDesc = BASIC_BUFFER_DESC;
 	idDesc.Width = NUM_SHADER_IDS * D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT;
 	HRESULT hr = d3dDevice->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &idDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&shaderIDs));
-	checkHR(hr, "initShaderTables, CreateCommittedResource: ");
+	checkHR(hr, nullptr, "initShaderTables, CreateCommittedResource: ");
 	ID3D12StateObjectProperties* props;
 	pso->QueryInterface(&props);
 
@@ -728,7 +855,7 @@ void PathTracer::initShaderTables() {
 
 void PathTracer::updateScene() {
 
-	if (debug) std::cout << "updateScene()" << std::endl;
+	//if (debug) std::cout << "updateScene()" << std::endl;
 
 	updateTransforms();
 
@@ -773,11 +900,9 @@ void PathTracer::render() {
 	gpuHandle.ptr += descriptorIncrementSize;
 	cmdList->SetComputeRootDescriptorTable(1, gpuHandle); // t0 TLAS
 	gpuHandle.ptr += descriptorIncrementSize;
-	cmdList->SetComputeRootDescriptorTable(2, gpuHandle); // u1 vertex buffer
-	gpuHandle.ptr += descriptorIncrementSize * NUM_INSTANCES;
-	cmdList->SetComputeRootDescriptorTable(3, gpuHandle); // u2 index buffer buffer
-
-
+	cmdList->SetComputeRootDescriptorTable(2, gpuHandle); // t1 vertex buffer
+	gpuHandle.ptr += descriptorIncrementSize * allVertexBuffers.size();
+	cmdList->SetComputeRootDescriptorTable(3, gpuHandle); // t2 index buffer
 
 	// Dispatch rays
 
@@ -843,10 +968,14 @@ void PathTracer::quit() {
 	delete meshManager;
 }
 
-void PathTracer::checkHR(HRESULT hr, std::string context) {
+void PathTracer::checkHR(HRESULT hr, ID3DBlob* errorblob, std::string context) {
 	if (FAILED(hr)) {
 		std::cerr << context << "HRESULT 0x" << std::hex << hr << std::endl;
 		if (hr == E_OUTOFMEMORY) std::cerr << "(Out of memory?)\n";
 		else if (hr == E_INVALIDARG) std::cerr << "(Invalid arg — check desc)\n";
+	}
+	if (errorblob) {
+		OutputDebugStringA((char*)errorblob->GetBufferPointer());
+		errorblob->Release();
 	}
 }
