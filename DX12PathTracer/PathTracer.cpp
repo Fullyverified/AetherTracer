@@ -506,20 +506,6 @@ void PathTracer::initModelBLAS() {
 	
 }
 
-// TLAS
-
-ID3D12Resource* PathTracer::makeTLAS(ID3D12Resource* instances, UINT numInstances, UINT64* updateScratchSize) {
-
-	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
-	.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL,
-	.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE,
-	.NumDescs = numInstances,
-	.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
-	.InstanceDescs = instances->GetGPUVirtualAddress() };
-
-	return makeAccelerationStructure(inputs, updateScratchSize);
-}
-
 // scene update
 
 void PathTracer::updateTransforms() {
@@ -587,7 +573,9 @@ void PathTracer::initScene() {
 
 	if (debug) std::cout << "init scene" << std::endl;
 
-	uint32_t currentInstance = 0;
+	uint32_t instanceID = 0; // user provided
+	uint32_t instanceIndex = 0;
+	std::string currentObj = "";
 	for (DX12SceneObject* dx12SceneObject : dx12SceneObjects) {
 
 		if (dx12SceneObject->model->BLAS == nullptr) std::cout << "BLAS nullptr " << std::endl;
@@ -595,19 +583,37 @@ void PathTracer::initScene() {
 		ID3D12Resource* objectBlas = dx12SceneObject->model->BLAS;
 		objectBlas->GetGPUVirtualAddress();
 
-		instanceData[currentInstance] = {
-			.InstanceID = static_cast<UINT>(currentInstance),
+		if (dx12SceneObject->sceneObject->name != currentObj) {
+			instanceID++;
+			currentObj = dx12SceneObject->sceneObject->name;
+		}
+
+		instanceData[instanceIndex] = {
+			.InstanceID = static_cast<UINT>(instanceID),
 			.InstanceMask = 1,
 			.InstanceContributionToHitGroupIndex = 0,
 			.Flags = 0,
 			.AccelerationStructure = objectBlas->GetGPUVirtualAddress(),
 			};
-		currentInstance++;
-		
+		instanceIndex++;
 	}
 
 	updateTransforms();
 
+}
+
+// TLAS
+
+ID3D12Resource* PathTracer::makeTLAS(ID3D12Resource* instances, UINT numInstances, UINT64* updateScratchSize) {
+
+	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
+	.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL,
+	.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE,
+	.NumDescs = numInstances,
+	.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
+	.InstanceDescs = instances->GetGPUVirtualAddress() };
+
+	return makeAccelerationStructure(inputs, updateScratchSize);
 }
 
 void PathTracer::initTopLevel() {
@@ -636,7 +642,12 @@ void PathTracer::initDescriptors() {
 	allVertexBuffers.clear();
 	allIndexBuffers.clear();
 
+
+	std::string currentObj = "";
 	for (DX12SceneObject* dx12SceneObject : dx12SceneObjects) {
+
+		if (dx12SceneObject->sceneObject->name == currentObj) continue; // vertex and index buffer already stored (no duplicates, using instancing)
+		currentObj = dx12SceneObject->sceneObject->name;
 
 		auto* buffers = dx12SceneObject->model->modelBuffers;
 		size_t bufferSize = buffers->vertexDefaultBuffers.size();

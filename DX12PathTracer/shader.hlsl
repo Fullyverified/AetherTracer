@@ -12,6 +12,15 @@ struct Vertex
     float2 texcoord;
     uint materialIndex;
 };
+struct Material
+{
+    
+    
+    
+    
+};
+
+
 // UAV and SRVs
 RaytracingAccelerationStructure scene : register(t0, space0);
 RWTexture2D<float4> uav : register(u0, space0);
@@ -25,25 +34,25 @@ static const float3 skyBottom = float3(0.75, 0.86, 0.93);
 [shader("raygeneration")]
 void RayGeneration()
 {
-    
+    
     uint2 idx = DispatchRaysIndex().xy;
     float2 size = DispatchRaysDimensions().xy;
-    
+
     float2 uv = idx / size;
     float3 target = float3((uv.x * 2 - 1) * 1.8 * (size.x / size.y), (1 - uv.y) * 4 - 2 + camera.y, 0);
-    
+
     RayDesc ray;
     ray.Origin = camera;
     ray.Direction = target - camera;
     ray.TMin = 0.001;
     ray.TMax = 1000;
-    
+    
     Payload payload;
     payload.allowReflection = true;
     payload.missed = false;
     payload.throughput = float3(1, 1, 1);
     payload.color = float3(1, 1, 1);
-    
+
     TraceRay(scene, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
     uav[idx] = float4(payload.color, 1);
 }
@@ -57,34 +66,35 @@ void Miss(inout Payload payload)
 }
 void Hit(inout Payload payload, float2 uv)
 {
-    uint instanceID = InstanceID();
+    uint instanceIndex = InstanceIndex(); // auto generated
+    uint instanceID = InstanceID(); // user provided
     uint prim = PrimitiveIndex();
-    uint geomIdx = GeometryIndex();
-    
-    // Fetch triangle indices
-    uint i0 = IndexBuffers[instanceID][prim * 3 + 0];
-    uint i1 = IndexBuffers[instanceID][prim * 3 + 1];
-    uint i2 = IndexBuffers[instanceID][prim * 3 + 2];
-    
-    // Fetch Verticies
-    Vertex v0 = VertexBuffers[instanceID][i0];
-    Vertex v1 = VertexBuffers[instanceID][i1];
-    Vertex v2 = VertexBuffers[instanceID][i2];
-    
-    // Interpolate normal from three vertices
+    //uint geomIdx = GeometryContributionToHitGroupIndex();
+
+    // Fetch triangle indices
+    uint i0 = IndexBuffers[instanceIndex][prim * 3 + 0];
+    uint i1 = IndexBuffers[instanceIndex][prim * 3 + 1];
+    uint i2 = IndexBuffers[instanceIndex][prim * 3 + 2];
+
+    // Fetch Vertices
+    Vertex v0 = VertexBuffers[instanceIndex][i0];
+    Vertex v1 = VertexBuffers[instanceIndex][i1];
+    Vertex v2 = VertexBuffers[instanceIndex][i2];
+
+    // Interpolate normal from three vertices
     float uv0 = 1.0f - uv.x - uv.y;
     float3 normal = normalize(v0.normal * uv0 + v1.normal * uv.x + v2.normal * uv.y);
     float3 worldNormal = normalize(mul(normal, (float3x3) ObjectToWorld4x3()));
-    
+
     float3 rayPos = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
-    
+
     float3 wi = WorldRayDirection() * -1;
     wi = normalize(wi);
-    
+
     float3 throughput = dot(worldNormal, wi);
-    
+
     payload.color *= throughput;
-    
+
 }
 [shader("closesthit")]
 void ClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes attribs)
@@ -92,6 +102,5 @@ void ClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes att
     float2 uv = attribs.barycentrics;
     Hit(payload, uv);
     return;
-        
-    
+    
 }

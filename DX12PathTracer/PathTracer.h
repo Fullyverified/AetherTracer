@@ -48,6 +48,15 @@ public:
 		DX12Model* model;
 	};
 
+	struct DX12Material {
+		DirectX::XMFLOAT3A color;
+		float roughness;
+		float metallic;
+		float ior;
+		float transmission;
+		float emission;
+	};
+
 	PathTracer() {}
 
 	~PathTracer() {}
