@@ -34,16 +34,12 @@ public:
 		materials[name] = material;
 	}
 
-	Material* loadMaterial(std::string name) {
-		return materials[name];
-	}
-
 	void initDefaultMaterials() {
 
-		materials["White plastic"] = new Material{ "White Plastic", {1, 1, 1}, 0.5, 0, 1, 0, 0 };
-		materials["Red plastic"] = new Material{ "Red Plastic", {1, 0, 0}, 0.5, 0, 1, 0, 0 };
-		materials["Blue plastic"] = new Material{ "Blue Plastic", {0, 0, 1}, 0.5, 0, 1, 0, 0 };
-		materials["Green plastic"] = new Material{ "Green Plastic", {0, 1, 0}, 0.5, 0, 1, 0, 0 };
+		materials["White Plastic"] = new Material{ "White Plastic", {1, 1, 1}, 0.5, 0, 1, 0, 0 };
+		materials["Red Plastic"] = new Material{ "Red Plastic", {1, 0, 0}, 0.5, 0, 1, 0, 0 };
+		materials["Green Plastic"] = new Material{ "Green Plastic", {0, 1, 0}, 0.5, 0, 1, 0, 0 };
+		materials["Blue Plastic"] = new Material{ "Blue Plastic", {0, 0, 1}, 0.5, 0, 1, 0, 0 };
 		materials["Shiny Copper"] = new Material{ "Shiny Copper", {0, 1, 0}, 0, 1, 1, 0, 0 };
 		materials["Mirror"] = new Material{ "Mirror", {1, 1, 1}, 0, 1, 1, 0, 0 };
 		materials["Light"] = new Material{ "Light", {1, 1, 1}, 0, 0, 1, 0, 1 };

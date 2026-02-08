@@ -1,8 +1,8 @@
-﻿#include "PathTracer.h"
+﻿#include "DX12PathTracer.h"
 #include <iostream>
 bool debug = true;
 
-LRESULT WINAPI PathTracer::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+LRESULT WINAPI DX12PathTracer::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	// Store 'this' pointer during WM_NCCREATE
 	if (msg == WM_NCCREATE) {
 		auto* cs = reinterpret_cast<CREATESTRUCT*>(lparam);
@@ -11,7 +11,7 @@ LRESULT WINAPI PathTracer::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 	}
 
 	// Retrieve 'this'
-	PathTracer* self = reinterpret_cast<PathTracer*>(
+	DX12PathTracer* self = reinterpret_cast<DX12PathTracer*>(
 		GetWindowLongPtr(hwnd, GWLP_USERDATA));
 
 	switch (msg) {
@@ -40,7 +40,7 @@ LRESULT WINAPI PathTracer::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 	}
 }
 
-void PathTracer::run() {
+void DX12PathTracer::run() {
 
 	std::cout << "making window" << std::endl;
 
@@ -85,21 +85,15 @@ void PathTracer::run() {
 
 }
 
-void PathTracer::init(HWND hwnd) {
+void DX12PathTracer::init(HWND hwnd) {
 	initDevice();
 	initSurfaces(hwnd);
 	initCommand();
-
-	sceneManager = new SceneManager();
-	sceneManager->initScene();
-	meshManager = new MeshManager();
-	meshManager->initMeshes();
-	materialManager = new MaterialManager();
-
 	initModelBuffers();
 	initModelBLAS();
 	initScene();
 	initTopLevel();
+	initMaterialBuffer();
 	initDescriptors();
 	initRootSignature();
 	initPipeline();
@@ -108,7 +102,7 @@ void PathTracer::init(HWND hwnd) {
 
 // device
 
-void PathTracer::initDevice() {
+void DX12PathTracer::initDevice() {
 
 	if (FAILED(CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&factory))))
 		CreateDXGIFactory2(0, IID_PPV_ARGS(&factory));
@@ -139,7 +133,7 @@ void PathTracer::initDevice() {
 
 // cpu gpu syncronization
 
-void PathTracer::flush() {
+void DX12PathTracer::flush() {
 	static UINT64 value = 1;
 	cmdQueue->Signal(fence, value);
 	fence->SetEventOnCompletion(value++, nullptr);
@@ -147,7 +141,7 @@ void PathTracer::flush() {
 
 // swap chain and uav
 
-void PathTracer::initSurfaces(HWND hwnd) {
+void DX12PathTracer::initSurfaces(HWND hwnd) {
 
 
 	// 8-bit SRGB
@@ -174,7 +168,7 @@ void PathTracer::initSurfaces(HWND hwnd) {
 }
 
 // render target
-void PathTracer::resize(HWND hwnd) {
+void DX12PathTracer::resize(HWND hwnd) {
 
 	std::cout << "Resize called" << std::endl;
 	if (!swapChain) {
@@ -220,14 +214,14 @@ void PathTracer::resize(HWND hwnd) {
 
 // command list and allocator
 
-void PathTracer::initCommand() {
+void DX12PathTracer::initCommand() {
 	// only one
 	d3dDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc));
 	d3dDevice->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&cmdList));
 }
 
 // create default heap buffer
-PathTracer::UploadDefaultBufferPair PathTracer::createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState) {
+DX12PathTracer::UploadDefaultBufferPair DX12PathTracer::createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState) {
 	std::cout << "byteSize: " << byteSize << std::endl;
 
 
@@ -282,7 +276,7 @@ PathTracer::UploadDefaultBufferPair PathTracer::createBuffers(const void* data, 
 
 // meshes
 
-void PathTracer::initModelBuffers() {
+void DX12PathTracer::initModelBuffers() {
 
 	// for vertex and index buffer SRVs
 
@@ -373,7 +367,6 @@ void PathTracer::initModelBuffers() {
 	
 	}
 
-
 	// Execute upload of buffers
 	cmdList->Close();
 	ID3D12CommandList* lists[] = { cmdList };
@@ -384,7 +377,7 @@ void PathTracer::initModelBuffers() {
 
 // acceleration structures
 
-ID3D12Resource* PathTracer::makeAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, UINT64* updateScratchSize) {
+ID3D12Resource* DX12PathTracer::makeAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, UINT64* updateScratchSize) {
 
 
 	auto makeBuffer = [this](UINT64 size, auto initialState) {
@@ -460,7 +453,7 @@ ID3D12Resource* PathTracer::makeAccelerationStructure(const D3D12_BUILD_RAYTRACI
 
 // BLAS
 
-void PathTracer::initModelBLAS() {
+void DX12PathTracer::initModelBLAS() {
 
 	if (debug) std::cout << "initBottomLevel()" << std::endl;
 
@@ -508,7 +501,7 @@ void PathTracer::initModelBLAS() {
 
 // scene update
 
-void PathTracer::updateTransforms() {
+void DX12PathTracer::updateTransforms() {
 
 	//if (debug) std::cout << "Update Transforms" << std::endl;
 
@@ -518,10 +511,10 @@ void PathTracer::updateTransforms() {
 
 	// apply meshes stored transform
  
-	for (DX12SceneObject* dx12SceneObject : dx12SceneObjects) {
+	for (DX12Entity* dx12Entity : dx12Entitys) {
 
-		auto vecRotation = dx12SceneObject->sceneObject->rotation;
-		auto vecPosition = dx12SceneObject->sceneObject->position;
+		auto vecRotation = dx12Entity->entity->rotation;
+		auto vecPosition = dx12Entity->entity->position;
 	
 		auto transform = DirectX::XMMatrixRotationRollPitchYaw(vecRotation.x, vecRotation.y, vecRotation.z);
 		transform = DirectX::XMMatrixRotationRollPitchYaw(time / 2, time / 3, time / 5);
@@ -535,27 +528,35 @@ void PathTracer::updateTransforms() {
 
 }
 
-void PathTracer::initScene() {
+void DX12PathTracer::initScene() {
 
 	if (debug) std::cout << "initScene()" << std::endl;
 
-	for (size_t i = 0; i < sceneManager->sceneObjects.size(); i++) {
+	for (size_t i = 0; i < entityManager->entitys.size(); i++) {
 
-		if (debug) std::cout << "creating DX12SceneObject*" << std::endl;
-		DX12SceneObject* dx12Object = new DX12SceneObject{};
-		if (debug) std::cout << "assigning sceneObject" << std::endl;
-		dx12Object->sceneObject = sceneManager->sceneObjects[i];
-		if (debug) std::cout << "assigning model" << std::endl;
-		dx12Object->model = dx12Models[sceneManager->sceneObjects[i]->name];
-	
-		dx12SceneObjects.push_back(dx12Object);
+		EntityManager::Entity* entity = entityManager->entitys[i];
+		DX12Entity* dx12Entity = new DX12Entity{};
+		dx12Entity->entity = entity;
+		dx12Entity->model = dx12Models[entity->name];
+
+		// create material if it doesn't already exist
+		if (materials.find(entity->material->name) == materials.end()) {
+			DX12Material* dx12Material = new DX12Material{ entity->material };
+			materials[entity->material->name] = dx12Material;
+			dx12Entity->material = dx12Material;
+		}
+		else {
+			dx12Entity->material = materials[entity->material->name];
+		}
+
+		dx12Entitys.push_back(dx12Entity);
 	}
 	
 	if (debug) std::cout << "creating instances" << std::endl;
 
 	// create instances
 	
-	NUM_INSTANCES = dx12SceneObjects.size();
+	NUM_INSTANCES = dx12Entitys.size();
 	
 	D3D12_RESOURCE_DESC instancesDesc{};
 	instancesDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -573,19 +574,22 @@ void PathTracer::initScene() {
 
 	if (debug) std::cout << "init scene" << std::endl;
 
-	uint32_t instanceID = 0; // user provided
+	uint32_t instanceID = -1; // user provided
 	uint32_t instanceIndex = 0;
-	std::string currentObj = "";
-	for (DX12SceneObject* dx12SceneObject : dx12SceneObjects) {
 
-		if (dx12SceneObject->model->BLAS == nullptr) std::cout << "BLAS nullptr " << std::endl;
+	for (DX12Entity* dx12Entity : dx12Entitys) {
 
-		ID3D12Resource* objectBlas = dx12SceneObject->model->BLAS;
+		if (dx12Entity->model->BLAS == nullptr) std::cout << "BLAS nullptr " << std::endl;
+
+		ID3D12Resource* objectBlas = dx12Entity->model->BLAS;
 		objectBlas->GetGPUVirtualAddress();
 
-		if (dx12SceneObject->sceneObject->name != currentObj) {
+		if (uniqueInstancesID.find(dx12Entity->entity->name) == uniqueInstancesID.end()) {
 			instanceID++;
-			currentObj = dx12SceneObject->sceneObject->name;
+			uniqueInstancesID[dx12Entity->entity->name] = instanceID;
+		}
+		else {
+			instanceID = uniqueInstancesID[dx12Entity->entity->name];
 		}
 
 		instanceData[instanceIndex] = {
@@ -594,7 +598,8 @@ void PathTracer::initScene() {
 			.InstanceContributionToHitGroupIndex = 0,
 			.Flags = 0,
 			.AccelerationStructure = objectBlas->GetGPUVirtualAddress(),
-			};
+		};
+
 		instanceIndex++;
 	}
 
@@ -602,9 +607,99 @@ void PathTracer::initScene() {
 
 }
 
+void DX12PathTracer::initMaterialBuffer() {
+
+	if (debug) std::cout << "initMaterialBuffer()" << std::endl;
+
+	// similar to init top level
+	// index buffer for materials
+	// no material duplicates
+
+	dx12Materials.clear();
+	uniqueInstancesID.clear();
+	materialIndex.clear();
+
+	uint32_t instanceIndex = -1;
+
+	for (DX12Entity* dx12Entity : dx12Entitys) {
+
+
+		DX12Material* dx12Mateiral = dx12Entity->material;
+
+		if (uniqueInstancesID.find(dx12Entity->entity->material->name) == uniqueInstancesID.end()) {
+			instanceIndex++;
+			uniqueInstancesID[dx12Entity->entity->material->name] = instanceIndex;
+			dx12Materials.push_back(*dx12Entity->material);
+		}
+		else {
+			instanceIndex = uniqueInstancesID[dx12Entity->entity->name];
+		}
+
+		materialIndex.push_back(instanceIndex);
+	}
+
+
+	if (debug) std::cout << "DX12Materials.size(): " << dx12Materials.size() << std::endl;
+	if (debug) std::cout << "materialIndex.size(): " << materialIndex.size() << std::endl;
+
+
+	size_t materialsSize = dx12Materials.size() * sizeof(DX12Material);
+	size_t indexSize = dx12Materials.size() * sizeof(uint32_t);
+
+	auto mbUpload = createBuffers(dx12Materials.data(), materialsSize, D3D12_RESOURCE_STATE_COMMON);
+	auto ibUpload = createBuffers(materialIndex.data(), indexSize, D3D12_RESOURCE_STATE_COMMON);
+
+
+	materialDefaultBuffer = mbUpload.HEAP_DEFAULT_BUFFER;
+	materialIndexDefaultBuffer = ibUpload.HEAP_DEFAULT_BUFFER;
+
+	// Reset cmdList and cmdAllc
+	cmdAlloc->Reset();
+	cmdList->Reset(cmdAlloc, nullptr);
+
+	std::cout << "Pushing buffer to VRAM" << std::endl;
+
+	// Barrier - transition buffer target to COPY_DEST
+	D3D12_RESOURCE_BARRIER barrier = {};
+	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+	barrier.Transition.pResource = ibUpload.HEAP_DEFAULT_BUFFER;
+	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+	barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	cmdList->ResourceBarrier(1, &barrier);
+
+	// transition index buffer
+	barrier.Transition.pResource = mbUpload.HEAP_DEFAULT_BUFFER;
+	cmdList->ResourceBarrier(1, &barrier);
+
+
+	// Copy to GPU
+	cmdList->CopyBufferRegion(mbUpload.HEAP_DEFAULT_BUFFER, 0, mbUpload.HEAP_UPLOAD_BUFFER, 0, materialsSize);
+	cmdList->CopyBufferRegion(ibUpload.HEAP_DEFAULT_BUFFER, 0, ibUpload.HEAP_UPLOAD_BUFFER, 0, indexSize);
+
+	// Barrier - transition to final state
+	barrier.Transition.pResource = mbUpload.HEAP_DEFAULT_BUFFER;
+	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	cmdList->ResourceBarrier(1, &barrier);
+
+	// index buffer
+	barrier.Transition.pResource = ibUpload.HEAP_DEFAULT_BUFFER;
+	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_INDEX_BUFFER;
+	cmdList->ResourceBarrier(1, &barrier);
+
+	// Execute upload of buffers
+	cmdList->Close();
+	ID3D12CommandList* lists[] = { cmdList };
+	cmdQueue->ExecuteCommandLists(1, lists);
+	flush();
+}
+
+
 // TLAS
 
-ID3D12Resource* PathTracer::makeTLAS(ID3D12Resource* instances, UINT numInstances, UINT64* updateScratchSize) {
+ID3D12Resource* DX12PathTracer::makeTLAS(ID3D12Resource* instances, UINT numInstances, UINT64* updateScratchSize) {
 
 	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
 	.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL,
@@ -616,7 +711,7 @@ ID3D12Resource* PathTracer::makeTLAS(ID3D12Resource* instances, UINT numInstance
 	return makeAccelerationStructure(inputs, updateScratchSize);
 }
 
-void PathTracer::initTopLevel() {
+void DX12PathTracer::initTopLevel() {
 
 	if (debug) std::cout << "initTopLevel()" << std::endl;
 
@@ -633,7 +728,7 @@ void PathTracer::initTopLevel() {
 
 // bind 
 
-void PathTracer::initDescriptors() {
+void DX12PathTracer::initDescriptors() {
 
 	if (debug) std::cout << "initDescriptors()" << std::endl;
 
@@ -643,26 +738,26 @@ void PathTracer::initDescriptors() {
 	allIndexBuffers.clear();
 
 
-	std::string currentObj = "";
-	for (DX12SceneObject* dx12SceneObject : dx12SceneObjects) {
-
-		if (dx12SceneObject->sceneObject->name == currentObj) continue; // vertex and index buffer already stored (no duplicates, using instancing)
-		currentObj = dx12SceneObject->sceneObject->name;
-
-		auto* buffers = dx12SceneObject->model->modelBuffers;
-		size_t bufferSize = buffers->vertexDefaultBuffers.size();
-
-		for (size_t i = 0; i < bufferSize; i++) {
-			allVertexBuffers.push_back(buffers->vertexDefaultBuffers[i]);
-			allIndexBuffers.push_back(buffers->indexDefaultBuffers[i]);
+	uniqueInstances.clear();
+	for (DX12Entity* dx12SceneObject : dx12Entitys) {
+		if (uniqueInstances.count(dx12SceneObject->entity->name) == 0) {
+			uniqueInstances.insert(dx12SceneObject->entity->name);
+			auto* buffers = dx12SceneObject->model->modelBuffers;
+			size_t bufferSize = buffers->vertexDefaultBuffers.size();
+			for (size_t i = 0; i < bufferSize; i++) {
+				allVertexBuffers.push_back(buffers->vertexDefaultBuffers[i]);
+				allIndexBuffers.push_back(buffers->indexDefaultBuffers[i]);
+			}
 		}
+
 	}
 
 	size_t numBuffers = allVertexBuffers.size();
+	std::cout << "numBuffers size: " << allVertexBuffers.size() << std::endl;
 
-	// Heap size: 1 UAV (render target) + 1 SRV (scene), + NUM_INSTANCES * (vertex srvs, index srvs)
+	// Heap size: 1 UAV (render target) + 1 SRV (scene), + NUM_INSTANCES * (vertex srvs, index srvs) + 1 Material SRV + MaterialIndex SRV
 
-	UINT numDescriptors = 2 + numBuffers * 2;
+	UINT numDescriptors = 2 + numBuffers * 2 + 2;
 	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {
 		.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
 		.NumDescriptors = numDescriptors,
@@ -722,11 +817,33 @@ void PathTracer::initDescriptors() {
 		std::cout << "srvNumElementsIndex: " << srvDesc.Buffer.NumElements << std::endl;
 	}
 
+	// slot 4 Material Buffer
+	srvDesc = {};
+	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+	srvDesc.Buffer.FirstElement = 0;
+	srvDesc.Buffer.NumElements = static_cast<UINT>(dx12Materials.size());
+	srvDesc.Buffer.StructureByteStride = sizeof(DX12Material);
+	d3dDevice->CreateShaderResourceView(materialDefaultBuffer, &srvDesc, cpuHandle);
+	cpuHandle.ptr += descriptorIncrementSize;
+
+	// slot 5 Material Index Buffer
+	srvDesc = {};
+	srvDesc.Format = DXGI_FORMAT_R32_UINT;
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+	srvDesc.Buffer.FirstElement = 0;
+	srvDesc.Buffer.NumElements = static_cast<UINT>(materialIndexDefaultBuffer->GetDesc().Width / sizeof(uint32_t));
+	srvDesc.Buffer.StructureByteStride = 0;
+	d3dDevice->CreateShaderResourceView(materialIndexDefaultBuffer, &srvDesc, cpuHandle);
+	cpuHandle.ptr += descriptorIncrementSize;
 }
+
 
 // root signature
 
-void PathTracer::initRootSignature() {
+void DX12PathTracer::initRootSignature() {
 
 	if (debug) std::cout << "initRootSignature()" << std::endl;
 
@@ -764,16 +881,33 @@ void PathTracer::initRootSignature() {
 	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 	};
 
+	D3D12_DESCRIPTOR_RANGE materialRange = {
+	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+	.NumDescriptors = 1,
+	.BaseShaderRegister = 3,
+	.RegisterSpace = 3,
+	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+	};
 
-	D3D12_ROOT_PARAMETER params[4] = {												// num desriptor ranges, descriptor range
+	D3D12_DESCRIPTOR_RANGE materialIndexRange = {
+	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+	.NumDescriptors = 1,
+	.BaseShaderRegister = 3,
+	.RegisterSpace = 4,
+	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+	};
+
+	D3D12_ROOT_PARAMETER params[6] = {												// num desriptor ranges, descriptor range
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &uavRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &sceneRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &vertexRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &indexRange}},
+		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &materialRange}},
+		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &materialIndexRange}},
 	};
 
 	D3D12_ROOT_SIGNATURE_DESC desc = {
-		.NumParameters = 4,
+		.NumParameters = 6,
 		.pParameters = params,
 		.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE
 	};
@@ -793,7 +927,7 @@ void PathTracer::initRootSignature() {
 
 // ray tracing pso
 
-void PathTracer::initPipeline() {
+void DX12PathTracer::initPipeline() {
 
 	if (debug) std::cout << "initPipeline()" << std::endl;
 
@@ -835,7 +969,7 @@ void PathTracer::initPipeline() {
 
 // shader tables
 
-void PathTracer::initShaderTables() {
+void DX12PathTracer::initShaderTables() {
 
 	if (debug) std::cout << "iniShaderTables()" << std::endl;
 
@@ -864,7 +998,7 @@ void PathTracer::initShaderTables() {
 
 }
 
-void PathTracer::updateScene() {
+void DX12PathTracer::updateScene() {
 
 	//if (debug) std::cout << "updateScene()" << std::endl;
 
@@ -894,7 +1028,7 @@ void PathTracer::updateScene() {
 
 // command submission
 
-void PathTracer::render() {
+void DX12PathTracer::render() {
 
 	cmdAlloc->Reset();
 	cmdList->Reset(cmdAlloc, nullptr);
@@ -914,6 +1048,10 @@ void PathTracer::render() {
 	cmdList->SetComputeRootDescriptorTable(2, gpuHandle); // t1 vertex buffer
 	gpuHandle.ptr += descriptorIncrementSize * allVertexBuffers.size();
 	cmdList->SetComputeRootDescriptorTable(3, gpuHandle); // t2 index buffer
+	gpuHandle.ptr += descriptorIncrementSize * allIndexBuffers.size();
+	cmdList->SetComputeRootDescriptorTable(4, gpuHandle); // t3 material buffer
+	gpuHandle.ptr += descriptorIncrementSize;
+	cmdList->SetComputeRootDescriptorTable(5, gpuHandle); // t3 material index buffer
 
 	// Dispatch rays
 
@@ -975,11 +1113,11 @@ void PathTracer::render() {
 
 }
 
-void PathTracer::quit() {
+void DX12PathTracer::quit() {
 	delete meshManager;
 }
 
-void PathTracer::checkHR(HRESULT hr, ID3DBlob* errorblob, std::string context) {
+void DX12PathTracer::checkHR(HRESULT hr, ID3DBlob* errorblob, std::string context) {
 	if (FAILED(hr)) {
 		std::cerr << context << "HRESULT 0x" << std::hex << hr << std::endl;
 		if (hr == E_OUTOFMEMORY) std::cerr << "(Out of memory?)\n";

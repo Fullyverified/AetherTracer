@@ -15,10 +15,10 @@
 
 #include "MeshManager.h"
 #include "MaterialManager.h"
-#include "SceneManager.h"
+#include "EntityManager.h"
 #include "Vector.h"
 
-class PathTracer {
+class DX12PathTracer {
 public:
 
 	struct VertexIndexBuffers {
@@ -41,25 +41,38 @@ public:
 		VertexIndexBuffers* modelBuffers; // DX12 buffers - Upload refers to CPU, Default refers to GPU
 	};
 
-	struct DX12SceneObject {
-		DX12SceneObject() : sceneObject(nullptr), model(nullptr) {};
-
-		SceneManager::SceneObject* sceneObject; // name, position, rotation
-		DX12Model* model;
-	};
-
 	struct DX12Material {
-		DirectX::XMFLOAT3A color;
+		DirectX::XMFLOAT3 color;
 		float roughness;
 		float metallic;
 		float ior;
 		float transmission;
 		float emission;
+
+		DX12Material(MaterialManager::Material* material) {
+			color.x = material->color.x;
+			color.y = material->color.y;
+			color.z = material->color.z;
+			roughness = material->roughness;
+			metallic = material->metallic;
+			ior = material->ior;
+			transmission = material->transmission;
+			emission = material->emission;
+		}
+		
 	};
 
-	PathTracer() {}
+	struct DX12Entity {
+		DX12Entity() : entity(nullptr), model(nullptr) {};
 
-	~PathTracer() {}
+		EntityManager::Entity* entity; // name, position, rotation
+		DX12Model* model;
+		DX12Material* material;
+	};
+
+	DX12PathTracer(EntityManager* entityManager, MeshManager* meshManager, MaterialManager* materialManager) : entityManager(entityManager), meshManager(meshManager), materialManager(materialManager) {}
+
+	~DX12PathTracer() {}
 
 	void run();
 
@@ -75,6 +88,7 @@ public:
 	void initModelBLAS();
 	void updateTransforms();
 	void initScene();
+	void initMaterialBuffer();
 	void initTopLevel();
 	void initDescriptors();
 	void initRootSignature();
@@ -121,15 +135,22 @@ public:
 	ID3D12CommandAllocator* cmdAlloc; // block of memory
 	ID3D12GraphicsCommandList4* cmdList;
 
-	// vertex, index buffers and SRVs
+	// vertex, index, material buffers for SRVs
 	ID3D12DescriptorHeap* descHeap;
 	UINT descriptorIncrementSize;
 	std::vector<ID3D12Resource*> allVertexBuffers;
 	std::vector<ID3D12Resource*> allIndexBuffers;
 
+	ID3D12Resource* materialDefaultBuffer;
+	std::vector<DX12Material> dx12Materials;
+	ID3D12Resource* materialIndexDefaultBuffer;
+	std::vector<uint32_t> materialIndices;
+
 	// scene object resources - including per model blas
-	std::vector<DX12SceneObject*> dx12SceneObjects;
+	std::vector<DX12Entity*> dx12Entitys;
 	std::unordered_map<std::string, DX12Model*> dx12Models;
+	std::unordered_map<std::string, DX12Material*> materials;
+	std::vector<uint32_t> materialIndex;
 
 	// acceleration structure
 	ID3D12Resource* tlas;
@@ -139,6 +160,8 @@ public:
 	UINT NUM_INSTANCES = 0;
 	ID3D12Resource* instances;
 	D3D12_RAYTRACING_INSTANCE_DESC* instanceData;
+	std::unordered_map<std::string, uint32_t> uniqueInstancesID;
+	std::unordered_set<std::string> uniqueInstances;
 
 	// root signature
 	ID3D12RootSignature* rootSignature;
@@ -153,6 +176,6 @@ public:
 	// managers
 	MeshManager* meshManager;
 	MaterialManager* materialManager;
-	SceneManager* sceneManager;
+	EntityManager* entityManager;
 
 };

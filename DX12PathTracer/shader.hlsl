@@ -14,10 +14,12 @@ struct Vertex
 };
 struct Material
 {
-    
-    
-    
-    
+    float3 color;
+    float roughness;
+    float metallic;
+    float ior;
+    float transmission;
+    float emission;
 };
 
 
@@ -26,6 +28,11 @@ RaytracingAccelerationStructure scene : register(t0, space0);
 RWTexture2D<float4> uav : register(u0, space0);
 StructuredBuffer<Vertex> VertexBuffers[] : register(t1, space1);
 Buffer<uint> IndexBuffers[] : register(t2, space2);
+
+StructuredBuffer<Material> Materials : register(t3, space3);
+Buffer<uint> materialIndexBuffer : register(t3, space4);
+
+
 // constants
 static const float3 camera = float3(0, 0, -7);
 static const float3 light = float3(0, 200, 0);
@@ -67,19 +74,18 @@ void Miss(inout Payload payload)
 void Hit(inout Payload payload, float2 uv)
 {
     uint instanceIndex = InstanceIndex(); // auto generated
-    uint instanceID = InstanceID(); // user provided
+    uint instanceID = InstanceID(); // for vertice/index buffers
     uint prim = PrimitiveIndex();
-    //uint geomIdx = GeometryContributionToHitGroupIndex();
 
     // Fetch triangle indices
-    uint i0 = IndexBuffers[instanceIndex][prim * 3 + 0];
-    uint i1 = IndexBuffers[instanceIndex][prim * 3 + 1];
-    uint i2 = IndexBuffers[instanceIndex][prim * 3 + 2];
+    uint i0 = IndexBuffers[instanceID][prim * 3 + 0];
+    uint i1 = IndexBuffers[instanceID][prim * 3 + 1];
+    uint i2 = IndexBuffers[instanceID][prim * 3 + 2];
 
     // Fetch Vertices
-    Vertex v0 = VertexBuffers[instanceIndex][i0];
-    Vertex v1 = VertexBuffers[instanceIndex][i1];
-    Vertex v2 = VertexBuffers[instanceIndex][i2];
+    Vertex v0 = VertexBuffers[instanceID][i0];
+    Vertex v1 = VertexBuffers[instanceID][i1];
+    Vertex v2 = VertexBuffers[instanceID][i2];
 
     // Interpolate normal from three vertices
     float uv0 = 1.0f - uv.x - uv.y;
@@ -91,11 +97,18 @@ void Hit(inout Payload payload, float2 uv)
     float3 wi = WorldRayDirection() * -1;
     wi = normalize(wi);
 
+    uint matID = materialIndexBuffer[instanceIndex];
+    Material mat = Materials[matID];
+    
     float3 throughput = dot(worldNormal, wi);
-
+    
+    throughput *= mat.color;    
     payload.color *= throughput;
+    
+    
 
 }
+        
 [shader("closesthit")]
 void ClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
