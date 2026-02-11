@@ -52,6 +52,7 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="shader.hlsl" />
+    <FxCompile Include="raytracingshader.hlsl" />
+    <FxCompile Include="postprocessingshader.hlsl" />
   </ItemGroup>
 </Project>

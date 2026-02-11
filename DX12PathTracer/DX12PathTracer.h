@@ -2,16 +2,17 @@
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
-#include <algorithm>     // For std::size, typed std::max, etc.
+#include <algorithm>
 #include <DirectXMath.h> // For XMMATRIX
 #include <Windows.h>     // To make a window, of course
-#include <d3d12.h>       // The star of our show :)
-#include <dxgi1_4.h>     // Needed to make the former two talk to each other
-#include "shader.fxh"    // The compiled shader binary, ready to go
+#include <d3d12.h>
+#include <dxgi1_4.h>
+
+#include <d3dcompiler.h> // for compiling shaders
 
 #pragma comment(lib, "user32") // For DefWindowProcW, etc.
-#pragma comment(lib, "d3d12")  // You'll never guess this one
-#pragma comment(lib, "dxgi")   // Another enigma
+#pragma comment(lib, "d3d12")
+#pragma comment(lib, "dxgi")
 
 #include "MeshManager.h"
 #include "MaterialManager.h"
@@ -70,13 +71,28 @@ public:
 		DX12Material* material;
 	};
 
-	DX12PathTracer(EntityManager* entityManager, MeshManager* meshManager, MaterialManager* materialManager) : entityManager(entityManager), meshManager(meshManager), materialManager(materialManager) {}
+	struct alignas(256)DX12Camera {
+
+		DX12Camera() : position{} {};
+		DX12Camera(PT::Vector3 position) : position{ position.x, position.y, position.z } {};
+
+		DirectX::XMFLOAT3 position;
+		float pad0;
+
+		DirectX::XMFLOAT4X4 invViewProj;
+		float pad1;
+
+	};
+
+	DX12PathTracer(EntityManager* entityManager, MeshManager* meshManager, MaterialManager* materialManager);
 
 	~DX12PathTracer() {}
 
 	void run();
 
 	static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+
+	void loadShaders();
 
 	void init(HWND hwnd);
 	void initDevice();
@@ -90,12 +106,23 @@ public:
 	void initScene();
 	void initMaterialBuffer();
 	void initTopLevel();
-	void initDescriptors();
-	void initRootSignature();
-	void initPipeline();
-	void initShaderTables();
+
+	void initRTDescriptors();
+	void initRTRootSignature();
+	void initRTPipeline();
+	void initRTShaderTables();
+
+	void initComputeRootSignature();
+	void initComputePipeline();
+	void initComputeDescriptors();
+
+	void updateCamera();
+	void updateToneParams();
 	void updateScene();
 	void render();
+
+	void postProcess();
+	void present();
 
 	void quit();
 
@@ -125,10 +152,14 @@ public:
 
 	// swap chain and uav
 	IDXGISwapChain3* swapChain;
-	//ID3D12DescriptorHeap* uavHeap;
 
 	// render target
 	ID3D12Resource* renderTarget;
+
+	// accumulation texture
+	ID3D12Resource* accumulationTexture;
+	UINT numFrames = 0;
+	bool cameraMoved = false;
 
 	// Command list and allocator
 
@@ -136,7 +167,6 @@ public:
 	ID3D12GraphicsCommandList4* cmdList;
 
 	// vertex, index, material buffers for SRVs
-	ID3D12DescriptorHeap* descHeap;
 	UINT descriptorIncrementSize;
 	std::vector<ID3D12Resource*> allVertexBuffers;
 	std::vector<ID3D12Resource*> allIndexBuffers;
@@ -145,12 +175,14 @@ public:
 	std::vector<DX12Material> dx12Materials;
 	ID3D12Resource* materialIndexDefaultBuffer;
 	std::vector<uint32_t> materialIndices;
+	ID3D12Resource* cameraConstantBuffer;
 
 	// scene object resources - including per model blas
 	std::vector<DX12Entity*> dx12Entitys;
 	std::unordered_map<std::string, DX12Model*> dx12Models;
 	std::unordered_map<std::string, DX12Material*> materials;
 	std::vector<uint32_t> materialIndex;
+	DX12Camera* dx12Camera;
 
 	// acceleration structure
 	ID3D12Resource* tlas;
@@ -163,15 +195,33 @@ public:
 	std::unordered_map<std::string, uint32_t> uniqueInstancesID;
 	std::unordered_set<std::string> uniqueInstances;
 
-	// root signature
-	ID3D12RootSignature* rootSignature;
-
-	// ray tracing pso
-	ID3D12StateObject* pso;
+	// RT root signature and ray tracing pso
+	ID3D12RootSignature* raytracingRootSignature;
+	ID3D12StateObject* raytracingPSO;
+	ID3D12DescriptorHeap* raytracingDescHeap;
 
 	// shader tables
 	UINT64 NUM_SHADER_IDS = 3;
 	ID3D12Resource* shaderIDs;
+
+	// Compute root signature and ray tracing pso
+	ID3D12RootSignature* computeRootSignature;
+	ID3D12PipelineState* computePSO;
+	ID3D12DescriptorHeap* computeDescHeap;
+
+	struct alignas(256)ToneMappingParams {
+		ToneMappingParams() : maxLum(20.0f), numIts(1.0f), exposure(1.0f) {};
+		float maxLum;
+		float exposure;
+		UINT numIts;
+	};
+
+	ToneMappingParams* toneMappingParams;
+	ID3D12Resource* toneMappingConstantBuffer;
+
+	// shader compilation
+	ID3DBlob* rsBlob;
+	ID3DBlob* csBlob;
 
 	// managers
 	MeshManager* meshManager;

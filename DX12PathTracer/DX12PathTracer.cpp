@@ -1,6 +1,14 @@
 ﻿#include "DX12PathTracer.h"
 #include <iostream>
+
+
 bool debug = true;
+
+DX12PathTracer::DX12PathTracer(EntityManager* entityManager, MeshManager* meshManager, MaterialManager* materialManager) : entityManager(entityManager), meshManager(meshManager), materialManager(materialManager) {
+	dx12Camera = new DX12Camera{ entityManager->camera->position };
+	toneMappingParams = new ToneMappingParams{};
+}
+
 
 LRESULT WINAPI DX12PathTracer::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	// Store 'this' pointer during WM_NCCREATE
@@ -51,7 +59,7 @@ void DX12PathTracer::run() {
 				 .lpszClassName = L"DxrTutorialClass" };
 	RegisterClassW(&wcw);
 	HWND hwnd = CreateWindowExW(0, L"DxrTutorialClass", L"DXR tutorial", WS_VISIBLE | WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-		/*width=*/CW_USEDEFAULT, /*height=*/CW_USEDEFAULT, nullptr, nullptr, nullptr, this);
+		/*width=*/1200, /*height=*/1200, nullptr, nullptr, nullptr, this);
 
 	if (!hwnd) {
 		std::cerr << "CreateWindowExW failed: " << GetLastError() << std::endl;
@@ -79,25 +87,122 @@ void DX12PathTracer::run() {
 		TranslateMessage(&msg);
 		DispatchMessageW(&msg);
 
-		render(); // Render the next frame
+		numFrames++;
+		// start of cmdList
+		render();
+		postProcess();
+		present();
+		// end of cmdList
 	}
 
 
 }
 
 void DX12PathTracer::init(HWND hwnd) {
+
+	loadShaders();
 	initDevice();
 	initSurfaces(hwnd);
 	initCommand();
+	updateCamera();
+	updateToneParams();
 	initModelBuffers();
 	initModelBLAS();
 	initScene();
 	initTopLevel();
 	initMaterialBuffer();
-	initDescriptors();
-	initRootSignature();
-	initPipeline();
-	initShaderTables();
+	initRTDescriptors();
+	initRTRootSignature();
+	initRTPipeline();
+	initRTShaderTables();
+	initComputeRootSignature();
+	initComputePipeline();
+	initComputeDescriptors();
+}
+
+void DX12PathTracer::loadShaders() {
+
+	HRESULT hr = D3DReadFileToBlob(L"raytracingshader.cso", &rsBlob);
+	checkHR(hr, nullptr, "Loading postprocessingshader");
+
+	hr = D3DReadFileToBlob(L"postprocessingshader.cso", &csBlob);
+	checkHR(hr, nullptr, "Loading postprocessingshader");
+}
+
+void DX12PathTracer::updateCamera() {
+
+	entityManager->camera->update();
+
+	using namespace DirectX;
+
+	EntityManager::Camera* entityCamera = entityManager->camera;
+
+	dx12Camera->position = { entityCamera->position.x, entityCamera->position.y, entityCamera->position.z };
+
+	PT::Vector3 position = entityCamera->position;
+	PT::Vector3 right = entityCamera->right;
+	PT::Vector3 up = entityCamera->up;
+	PT::Vector3 forward = entityCamera->forward;
+	float fovYDegrees = entityCamera->fovYDegrees;
+	float fovYRad = XMConvertToRadians(fovYDegrees);
+	float aspect = entityCamera->aspect;
+
+
+	XMFLOAT3 pos = { position.x, position.y, position.z };
+	XMVECTOR eyePos = XMLoadFloat3(&pos);
+
+	XMFLOAT3 forw = { forward.x, forward.y, forward.z };
+
+	XMVECTOR forwardVec = XMLoadFloat3(&forw);
+	XMVECTOR targetPos = XMVectorAdd(eyePos, forwardVec);
+	XMVECTOR worldUp = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+
+	XMMATRIX view = XMMatrixLookAtLH(eyePos, targetPos, worldUp);
+
+	XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(fovYRad, aspect, 0.01f, 1000.0f);
+
+	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
+	XMVECTOR det;
+
+	XMMATRIX invViewProj = DirectX::XMMatrixInverse(&det, viewProj);
+
+	XMStoreFloat4x4(&dx12Camera->invViewProj, invViewProj);
+
+
+	if (!cameraConstantBuffer) {
+	
+		D3D12_RESOURCE_DESC cbDesc = {};
+		cbDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		cbDesc.Width = sizeof(DX12Camera);
+		cbDesc.Height = 1;
+		cbDesc.DepthOrArraySize = 1;
+		cbDesc.MipLevels = 1;
+		cbDesc.SampleDesc.Count = 1;
+		cbDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		cbDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+		D3D12_HEAP_PROPERTIES uploadHeapProps = { D3D12_HEAP_TYPE_UPLOAD };
+
+		HRESULT hr = d3dDevice->CreateCommittedResource(
+			&uploadHeapProps,
+			D3D12_HEAP_FLAG_NONE,
+			&cbDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ, // cbv
+			nullptr,
+			IID_PPV_ARGS(&cameraConstantBuffer)
+		);
+		checkHR(hr, nullptr, "Create camera CB");
+
+	}
+
+
+	void* mapped = nullptr;
+	cameraConstantBuffer->Map(0, nullptr, &mapped);
+	memcpy(mapped, dx12Camera, sizeof(DX12Camera));
+	cameraConstantBuffer->Unmap(0, nullptr);
+
+	// upload heap is always visible for cbv, no barries
+
 }
 
 // device
@@ -176,9 +281,6 @@ void DX12PathTracer::resize(HWND hwnd) {
 		return;
 	}
 
-	if (!swapChain) [[unlikely]] return;
-
-
 	RECT rect;
 	GetClientRect(hwnd, &rect);
 	auto width = std::max<UINT>(rect.right - rect.left, 1);
@@ -188,7 +290,21 @@ void DX12PathTracer::resize(HWND hwnd) {
 
 	swapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
 
-	if (renderTarget) [[likely]] renderTarget->Release();
+	if (accumulationTexture) accumulationTexture->Release();
+	if (renderTarget) renderTarget->Release();
+
+	D3D12_RESOURCE_DESC accumDesc = {
+	   .Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+	   .Width = width,
+	   .Height = height,
+	   .DepthOrArraySize = 1,
+	   .MipLevels = 1,
+	   .Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+	   .SampleDesc = NO_AA,
+	   .Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS };
+
+	HRESULT hr = d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &accumDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&accumulationTexture));
+	checkHR(hr, nullptr, "Create accumulation texture");
 
 	D3D12_RESOURCE_DESC rtDesc = {
 	   .Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
@@ -199,16 +315,42 @@ void DX12PathTracer::resize(HWND hwnd) {
 	   .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
 	   .SampleDesc = NO_AA,
 	   .Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS };
-	d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &rtDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&renderTarget));
 
-	if (descHeap) {
-	
+	hr = d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &rtDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&renderTarget));
+	checkHR(hr, nullptr, "Create render target");
+
+
+
+	if (raytracingDescHeap && computeDescHeap) {
+
 		D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
 			.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
 			.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D };
-		d3dDevice->CreateUnorderedAccessView(renderTarget, nullptr, &uavDesc, descHeap->GetCPUDescriptorHandleForHeapStart());
+		d3dDevice->CreateUnorderedAccessView(accumulationTexture, nullptr, &uavDesc, raytracingDescHeap->GetCPUDescriptorHandleForHeapStart());
 
+		D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = computeDescHeap->GetCPUDescriptorHandleForHeapStart();
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = 1;
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		d3dDevice->CreateShaderResourceView(accumulationTexture, &srvDesc, cpuHandle);
+		cpuHandle.ptr += descriptorIncrementSize;
+
+
+		uavDesc = {
+			.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+			.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D };
+		d3dDevice->CreateUnorderedAccessView(renderTarget, nullptr, &uavDesc, computeDescHeap->GetCPUDescriptorHandleForHeapStart());
+
+		cmdList->Close();
+		ID3D12CommandList* lists[] = { cmdList };
+		cmdQueue->ExecuteCommandLists(1, lists);
+		flush();
 	}
+
 
 }
 
@@ -472,10 +614,10 @@ void DX12PathTracer::initModelBLAS() {
 			geometryDesc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
 			geometryDesc.Triangles.VertexBuffer.StartAddress = model->modelBuffers->vertexDefaultBuffers[i]->GetGPUVirtualAddress();
 			geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(MeshManager::Vertex);
-			geometryDesc.Triangles.VertexCount = model->loadedModel->meshes[i].vertices.size();
+			geometryDesc.Triangles.VertexCount = static_cast<UINT>(model->loadedModel->meshes[i].vertices.size());
 			geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
 			geometryDesc.Triangles.IndexBuffer = model->modelBuffers->indexDefaultBuffers[i]->GetGPUVirtualAddress();
-			geometryDesc.Triangles.IndexCount = model->loadedModel->meshes[i].indices.size();
+			geometryDesc.Triangles.IndexCount = static_cast<UINT>(model->loadedModel->meshes[i].indices.size());
 			geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R32_UINT;
 			geomDescs.push_back(geometryDesc);
 		}
@@ -503,6 +645,8 @@ void DX12PathTracer::initModelBLAS() {
 
 void DX12PathTracer::updateTransforms() {
 
+	//updateCamera();
+
 	//if (debug) std::cout << "Update Transforms" << std::endl;
 
 	auto time = static_cast<float>(GetTickCount64()) / 1000;
@@ -517,7 +661,7 @@ void DX12PathTracer::updateTransforms() {
 		auto vecPosition = dx12Entity->entity->position;
 	
 		auto transform = DirectX::XMMatrixRotationRollPitchYaw(vecRotation.x, vecRotation.y, vecRotation.z);
-		transform = DirectX::XMMatrixRotationRollPitchYaw(time / 2, time / 3, time / 5);
+		//transform = DirectX::XMMatrixRotationRollPitchYaw(time / 2, time / 3, time / 5);
 		transform *= DirectX::XMMatrixTranslation(vecPosition.x, vecPosition.y, vecPosition.z);
 
 		auto* ptr = reinterpret_cast<DirectX::XMFLOAT3X4*>(&instanceData[currentInstance].Transform);
@@ -532,6 +676,8 @@ void DX12PathTracer::initScene() {
 
 	if (debug) std::cout << "initScene()" << std::endl;
 
+	materials.clear();
+
 	for (size_t i = 0; i < entityManager->entitys.size(); i++) {
 
 		EntityManager::Entity* entity = entityManager->entitys[i];
@@ -539,13 +685,18 @@ void DX12PathTracer::initScene() {
 		dx12Entity->entity = entity;
 		dx12Entity->model = dx12Models[entity->name];
 
+		std::cout << "Material name: " << entity->material->name << std::endl;
+
 		// create material if it doesn't already exist
 		if (materials.find(entity->material->name) == materials.end()) {
+			std::cout << "Material doesnt exist " << std::endl;
+
 			DX12Material* dx12Material = new DX12Material{ entity->material };
 			materials[entity->material->name] = dx12Material;
 			dx12Entity->material = dx12Material;
 		}
 		else {
+			std::cout << "Material exists " << std::endl;
 			dx12Entity->material = materials[entity->material->name];
 		}
 
@@ -556,7 +707,7 @@ void DX12PathTracer::initScene() {
 
 	// create instances
 	
-	NUM_INSTANCES = dx12Entitys.size();
+	NUM_INSTANCES = static_cast<UINT>(dx12Entitys.size());
 	
 	D3D12_RESOURCE_DESC instancesDesc{};
 	instancesDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -592,6 +743,9 @@ void DX12PathTracer::initScene() {
 			instanceID = uniqueInstancesID[dx12Entity->entity->name];
 		}
 
+		std::cout << "InstanceIndex: " << instanceIndex << std::endl;
+		std::cout << "InstanceID: " << instanceID << std::endl;
+
 		instanceData[instanceIndex] = {
 			.InstanceID = static_cast<UINT>(instanceID),
 			.InstanceMask = 1,
@@ -625,17 +779,33 @@ void DX12PathTracer::initMaterialBuffer() {
 
 
 		DX12Material* dx12Mateiral = dx12Entity->material;
+		std::cout << "Material name: "<<dx12Entity->entity->material->name << std::endl;
 
 		if (uniqueInstancesID.find(dx12Entity->entity->material->name) == uniqueInstancesID.end()) {
 			instanceIndex++;
 			uniqueInstancesID[dx12Entity->entity->material->name] = instanceIndex;
 			dx12Materials.push_back(*dx12Entity->material);
+			std::cout << "Not in map " << std::endl;
+			std::cout << "instanceIndex: " <<instanceIndex<< std::endl;
 		}
 		else {
 			instanceIndex = uniqueInstancesID[dx12Entity->entity->name];
+			std::cout << "In map " << std::endl;
+			std::cout << "instanceIndex: " << instanceIndex << std::endl;
 		}
+		std::cout << "raw color dx12Entity" <<dx12Entity->material->color.x<<", "<<dx12Entity->material->color.y<< ", "<<dx12Entity->material->color.z << std::endl;
+		std::cout << "raw color entity" << dx12Entity->entity->material->color.x << ", " << dx12Entity->entity->material->color.y << ", " << dx12Entity->entity->material->color.z << std::endl;
 
 		materialIndex.push_back(instanceIndex);
+	}
+	std::cout << "Values: " << std::endl;
+
+	for (DX12Material mat : dx12Materials) {
+		std::cout << "Unqiue Mateiral: " << mat.color.x<<", "<<mat.color.y<<", "<<mat.color.z << std::endl;
+	}
+
+	for (uint32_t num : materialIndex) {
+		std::cout << "Mateiral Index Buffer: " << num << std::endl;
 	}
 
 
@@ -726,13 +896,41 @@ void DX12PathTracer::initTopLevel() {
 	checkHR(hr, nullptr, "initTopLevel: CreateCommittedResource");
 }
 
+void DX12PathTracer::updateScene() {
+
+	//if (debug) std::cout << "updateScene()" << std::endl;
+
+	updateTransforms();
+
+	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC desc = {
+	.DestAccelerationStructureData = tlas->GetGPUVirtualAddress(),
+	.Inputs = {
+		.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL,
+		.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE,
+		.NumDescs = NUM_INSTANCES,
+		.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
+		.InstanceDescs = instances->GetGPUVirtualAddress()},
+	.SourceAccelerationStructureData = tlas->GetGPUVirtualAddress(),
+	.ScratchAccelerationStructureData = tlasUpdateScratch->GetGPUVirtualAddress(),
+	};
+
+	cmdList->BuildRaytracingAccelerationStructure(&desc, 0, nullptr);
+
+
+	D3D12_RESOURCE_BARRIER barrier = { .Type = D3D12_RESOURCE_BARRIER_TYPE_UAV,
+										.UAV = {.pResource = tlas} };
+
+	cmdList->ResourceBarrier(1, &barrier);
+
+}
+
 // bind 
 
-void DX12PathTracer::initDescriptors() {
+void DX12PathTracer::initRTDescriptors() {
 
-	if (debug) std::cout << "initDescriptors()" << std::endl;
+	if (debug) std::cout << "initRTDescriptors()" << std::endl;
 
-	descriptorIncrementSize = d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	UINT descriptorIncrementSize = d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 	allVertexBuffers.clear();
 	allIndexBuffers.clear();
@@ -755,29 +953,30 @@ void DX12PathTracer::initDescriptors() {
 	size_t numBuffers = allVertexBuffers.size();
 	std::cout << "numBuffers size: " << allVertexBuffers.size() << std::endl;
 
-	// Heap size: 1 UAV (render target) + 1 SRV (scene), + NUM_INSTANCES * (vertex srvs, index srvs) + 1 Material SRV + MaterialIndex SRV
+	// Heap size: 1 UAV (accumulation texture) + 1 SRV (scene), + NUM_INSTANCES * (vertex srvs, index srvs) + 1 Material SRV + MaterialIndex SRV + Camera CBV
 
-	UINT numDescriptors = 2 + numBuffers * 2 + 2;
+	UINT numDescriptors = 2 + numBuffers * 2 + 3;
+
 	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {
 		.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
 		.NumDescriptors = numDescriptors,
 		.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
 	};
 
-	HRESULT hr = d3dDevice->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&descHeap));
+	HRESULT hr = d3dDevice->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&raytracingDescHeap));
 	checkHR(hr, nullptr, "CreateDescriptorHeap");
 
 	if (debug) std::cout << "creating SRVs" << std::endl;
 
 	// Create views
-	D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = descHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = raytracingDescHeap->GetCPUDescriptorHandleForHeapStart();
 
-	// slot 0 UAV for render target
+	// slot 0 UAV for accumulation texture
 	D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
-		.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+		.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
 		.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D
 	};
-	d3dDevice->CreateUnorderedAccessView(renderTarget, nullptr, &uavDesc, cpuHandle);
+	d3dDevice->CreateUnorderedAccessView(accumulationTexture, nullptr, &uavDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
 	// slot 1 SRV for TLAS
@@ -838,16 +1037,25 @@ void DX12PathTracer::initDescriptors() {
 	srvDesc.Buffer.StructureByteStride = 0;
 	d3dDevice->CreateShaderResourceView(materialIndexDefaultBuffer, &srvDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
+
+	// Camera CBV
+	D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
+	cbvDesc.BufferLocation = cameraConstantBuffer->GetGPUVirtualAddress();
+	cbvDesc.SizeInBytes = sizeof(DX12Camera);
+
+	d3dDevice->CreateConstantBufferView(&cbvDesc, cpuHandle);
+	cpuHandle.ptr += descriptorIncrementSize;
+	
 }
 
 
 // root signature
 
-void DX12PathTracer::initRootSignature() {
+void DX12PathTracer::initRTRootSignature() {
 
-	if (debug) std::cout << "initRootSignature()" << std::endl;
+	if (debug) std::cout << "initRTRootSignature()" << std::endl;
 
-	UINT NUM_BUFFERS = allVertexBuffers.size();
+	UINT NUM_BUFFERS = static_cast<UINT>(allVertexBuffers.size());
 
 	D3D12_DESCRIPTOR_RANGE uavRange = {
 	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
@@ -897,7 +1105,22 @@ void DX12PathTracer::initRootSignature() {
 	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 	};
 
-	D3D12_ROOT_PARAMETER params[6] = {												// num desriptor ranges, descriptor range
+	D3D12_DESCRIPTOR_RANGE cameraRange = {
+	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV,
+	.NumDescriptors = 1,
+	.BaseShaderRegister = 0,
+	.RegisterSpace = 0,
+	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+	};
+
+	// CBV for Camera
+	D3D12_ROOT_PARAMETER cameraParam = {};
+	cameraParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	cameraParam.Descriptor.ShaderRegister = 0;
+	cameraParam.Descriptor.RegisterSpace = 0;
+	cameraParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+	D3D12_ROOT_PARAMETER params[7] = {												// num desriptor ranges, descriptor range
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &uavRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &sceneRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &vertexRange}},
@@ -906,8 +1129,10 @@ void DX12PathTracer::initRootSignature() {
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &materialIndexRange}},
 	};
 
+	params[6] = cameraParam;
+
 	D3D12_ROOT_SIGNATURE_DESC desc = {
-		.NumParameters = 6,
+		.NumParameters = 7,
 		.pParameters = params,
 		.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE
 	};
@@ -918,7 +1143,7 @@ void DX12PathTracer::initRootSignature() {
 	checkHR(hr, nullptr, "D3D12SerializeRootSignature: ");
 
 
-	hr = d3dDevice->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rootSignature));
+	hr = d3dDevice->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&raytracingRootSignature));
 	checkHR(hr, errorblob, "CreateRootSignature: ");
 
 	blob->Release();
@@ -927,58 +1152,61 @@ void DX12PathTracer::initRootSignature() {
 
 // ray tracing pso
 
-void DX12PathTracer::initPipeline() {
+void DX12PathTracer::initRTPipeline() {
 
-	if (debug) std::cout << "initPipeline()" << std::endl;
+	if (debug) std::cout << "initRTPipeline()" << std::endl;
 
 	D3D12_DXIL_LIBRARY_DESC lib = {
-	.DXILLibrary = {.pShaderBytecode = compiledShader, .BytecodeLength = std::size(compiledShader)} };
+	.DXILLibrary = { rsBlob->GetBufferPointer(), rsBlob->GetBufferSize()}};
 
-
-
-	D3D12_HIT_GROUP_DESC hitGroup = { .HitGroupExport = L"HitGroup",
+	D3D12_HIT_GROUP_DESC hitGroup = {
+	.HitGroupExport = L"HitGroup",
 	.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES,
-	.ClosestHitShaderImport = L"ClosestHit" };
-
+	.AnyHitShaderImport = nullptr,
+	.ClosestHitShaderImport = L"ClosestHit",
+	.IntersectionShaderImport = nullptr
+	};
 
 	D3D12_RAYTRACING_SHADER_CONFIG shaderCfg = {
-	.MaxPayloadSizeInBytes = 32,
-	.MaxAttributeSizeInBytes = 8,
+	.MaxPayloadSizeInBytes = 56,
+	.MaxAttributeSizeInBytes = 8, // triangle attribs
 	};
 
 
-	D3D12_GLOBAL_ROOT_SIGNATURE globalSig = { rootSignature };
+	D3D12_GLOBAL_ROOT_SIGNATURE globalSig = { raytracingRootSignature };
 
-	D3D12_RAYTRACING_PIPELINE_CONFIG pipelineCfg = { .MaxTraceRecursionDepth = 3 };
+	D3D12_RAYTRACING_PIPELINE_CONFIG pipelineCfg = { .MaxTraceRecursionDepth = 4 };
 
 	D3D12_STATE_SUBOBJECT subobjects[] = {
 		{.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY, .pDesc = &lib},
 		{.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP, .pDesc = &hitGroup},
 		{.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG, .pDesc = &shaderCfg},
 		{.Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE, .pDesc = &globalSig},
-		{.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG, .pDesc = &pipelineCfg}
+		{.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG, .pDesc = &pipelineCfg},
 	};
 
-	D3D12_STATE_OBJECT_DESC desc = { .Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE,
+	D3D12_STATE_OBJECT_DESC psoDesc = {
+		.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE,
 		.NumSubobjects = std::size(subobjects),
-		.pSubobjects = subobjects };
-	HRESULT hr = d3dDevice->CreateStateObject(&desc, IID_PPV_ARGS(&pso));
+		.pSubobjects = subobjects};
+
+	HRESULT hr = d3dDevice->CreateStateObject(&psoDesc, IID_PPV_ARGS(&raytracingPSO));
 	checkHR(hr, nullptr, "initPipeLine, CreateStateObject: ");
 
 }
 
 // shader tables
 
-void DX12PathTracer::initShaderTables() {
+void DX12PathTracer::initRTShaderTables() {
 
-	if (debug) std::cout << "iniShaderTables()" << std::endl;
+	if (debug) std::cout << "iniRTShaderTables()" << std::endl;
 
 	auto idDesc = BASIC_BUFFER_DESC;
 	idDesc.Width = NUM_SHADER_IDS * D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT;
 	HRESULT hr = d3dDevice->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &idDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&shaderIDs));
 	checkHR(hr, nullptr, "initShaderTables, CreateCommittedResource: ");
 	ID3D12StateObjectProperties* props;
-	pso->QueryInterface(&props);
+	raytracingPSO->QueryInterface(&props);
 
 	void* data;
 	auto writeId = [&](const wchar_t* name) {
@@ -998,31 +1226,155 @@ void DX12PathTracer::initShaderTables() {
 
 }
 
-void DX12PathTracer::updateScene() {
+void DX12PathTracer::updateToneParams() {
 
-	//if (debug) std::cout << "updateScene()" << std::endl;
+	toneMappingParams->numIts = numFrames;
 
-	updateTransforms();
+	std::cout << "num frames: " << numFrames << std::endl;
 
-	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC desc = {
-	.DestAccelerationStructureData = tlas->GetGPUVirtualAddress(),
-	.Inputs = {
-		.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL,
-		.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE,
-		.NumDescs = NUM_INSTANCES,
-		.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
-		.InstanceDescs = instances->GetGPUVirtualAddress()},
-	.SourceAccelerationStructureData = tlas->GetGPUVirtualAddress(),
-	.ScratchAccelerationStructureData = tlasUpdateScratch->GetGPUVirtualAddress(),
+	if (!toneMappingConstantBuffer) {
+	
+		std::cout << "Creating tone mapping buffer" << std::endl;
+
+		D3D12_RESOURCE_DESC cbDesc = {};
+		cbDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		cbDesc.Width = sizeof(ToneMappingParams);
+		cbDesc.Height = 1;
+		cbDesc.DepthOrArraySize = 1;
+		cbDesc.MipLevels = 1;
+		cbDesc.SampleDesc.Count = 1;
+		cbDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		cbDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+		D3D12_HEAP_PROPERTIES uploadHeapProps = { D3D12_HEAP_TYPE_UPLOAD };
+
+		HRESULT hr = d3dDevice->CreateCommittedResource(
+			&uploadHeapProps,
+			D3D12_HEAP_FLAG_NONE,
+			&cbDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ, // cbv
+			nullptr,
+			IID_PPV_ARGS(&toneMappingConstantBuffer)
+		);
+		checkHR(hr, nullptr, "Create camera CB");
+	}
+
+	void* mapped = nullptr;
+	toneMappingConstantBuffer->Map(0, nullptr, &mapped);
+	memcpy(mapped, toneMappingParams, sizeof(ToneMappingParams));
+	toneMappingConstantBuffer->Unmap(0, nullptr);
+
+	// upload heap is always visible for cbv, no barriers
+
+}
+
+
+void DX12PathTracer::initComputeDescriptors() {
+
+	std::cout << "initComputeDescriptors" << std::endl;
+
+	UINT numDescriptors = 3; // SRV accumulationTexture, UAV renderTarget, CBV params
+
+	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {
+	.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+	.NumDescriptors = 3,
+	.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
 	};
 
-	cmdList->BuildRaytracingAccelerationStructure(&desc, 0, nullptr);
+	HRESULT hr = d3dDevice->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&computeDescHeap));
+	checkHR(hr, nullptr, "CreateDescriptorHeap");
 
+	D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = computeDescHeap->GetCPUDescriptorHandleForHeapStart();
+	descriptorIncrementSize = d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-	D3D12_RESOURCE_BARRIER barrier = { .Type = D3D12_RESOURCE_BARRIER_TYPE_UAV,
-										.UAV = {.pResource = tlas} };
+	// slot 0 SRV for accumulationTexture
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = 1;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	d3dDevice->CreateShaderResourceView(accumulationTexture, &srvDesc, cpuHandle);
+	cpuHandle.ptr += descriptorIncrementSize;
 
-	cmdList->ResourceBarrier(1, &barrier);
+	// slot 1 UAV for renderTarget
+	D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+	uavDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+	d3dDevice->CreateUnorderedAccessView(renderTarget, nullptr, &uavDesc, cpuHandle);
+	cpuHandle.ptr += descriptorIncrementSize;
+
+	// CBV post processing params
+	D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
+	cbvDesc.BufferLocation = toneMappingConstantBuffer->GetGPUVirtualAddress();
+	cbvDesc.SizeInBytes = sizeof(ToneMappingParams);
+	d3dDevice->CreateConstantBufferView(&cbvDesc, cpuHandle);
+	cpuHandle.ptr += descriptorIncrementSize;
+
+}
+
+void DX12PathTracer::initComputePipeline() {
+
+	std::cout << "initComputePipeline" << std::endl;
+
+	D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc = {};
+	psoDesc.pRootSignature = computeRootSignature;
+	psoDesc.CS = { csBlob->GetBufferPointer(), csBlob->GetBufferSize() };
+	HRESULT hr = d3dDevice->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&computePSO));
+	checkHR(hr, nullptr, "Create compute pipeline state");
+
+}
+
+void DX12PathTracer::initComputeRootSignature() {
+
+	std::cout << "initComputeRootSignature" << std::endl;
+
+	// t0, accumulation texture
+	D3D12_DESCRIPTOR_RANGE srvRange = {
+		.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+		.NumDescriptors = 1,
+		.BaseShaderRegister = 0,
+		.RegisterSpace = 0,
+		.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+
+	};
+
+	// u0, render target
+	D3D12_DESCRIPTOR_RANGE uavRange = {
+		.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
+		.NumDescriptors = 1,
+		.BaseShaderRegister = 0,
+		.RegisterSpace = 0,
+		.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+	};
+
+	D3D12_ROOT_PARAMETER toneParam = {};
+	toneParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	toneParam.Descriptor.ShaderRegister = 0;
+	toneParam.Descriptor.RegisterSpace = 0;
+	toneParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+	D3D12_ROOT_PARAMETER params[3] = {
+		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &srvRange}},
+		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &uavRange}},
+	};
+
+	params[2] = toneParam;
+
+	D3D12_ROOT_SIGNATURE_DESC desc = {
+		.NumParameters = 3,
+		.pParameters = params,
+		.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE
+	};
+
+	ID3DBlob* blob;
+	ID3DBlob* errorBlob;
+	HRESULT hr = D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1_0, &blob, &errorBlob);
+	checkHR(hr, errorBlob, "Serialize Compute root signature");
+
+	hr = d3dDevice->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&computeRootSignature));
+	checkHR(hr, errorBlob, "Serialize Compute root signature");
+	blob->Release();
 
 }
 
@@ -1032,15 +1384,17 @@ void DX12PathTracer::render() {
 
 	cmdAlloc->Reset();
 	cmdList->Reset(cmdAlloc, nullptr);
+
+	//updateCamera();
 	updateScene();
 
-	cmdList->SetPipelineState1(pso);
-	cmdList->SetComputeRootSignature(rootSignature);
+	cmdList->SetPipelineState1(raytracingPSO);
+	cmdList->SetComputeRootSignature(raytracingRootSignature);
 
-	ID3D12DescriptorHeap* heaps[] = { descHeap };
+	ID3D12DescriptorHeap* heaps[] = { raytracingDescHeap };
 	cmdList->SetDescriptorHeaps(1, heaps);
 
-	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = descHeap->GetGPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = raytracingDescHeap->GetGPUDescriptorHandleForHeapStart();
 	cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // u0 UAV
 	gpuHandle.ptr += descriptorIncrementSize;
 	cmdList->SetComputeRootDescriptorTable(1, gpuHandle); // t0 TLAS
@@ -1052,6 +1406,8 @@ void DX12PathTracer::render() {
 	cmdList->SetComputeRootDescriptorTable(4, gpuHandle); // t3 material buffer
 	gpuHandle.ptr += descriptorIncrementSize;
 	cmdList->SetComputeRootDescriptorTable(5, gpuHandle); // t3 material index buffer
+
+	cmdList->SetComputeRootConstantBufferView(6, cameraConstantBuffer->GetGPUVirtualAddress()); // b0 camera cbv
 
 	// Dispatch rays
 
@@ -1072,6 +1428,54 @@ void DX12PathTracer::render() {
 		.Depth = 1 };
 	cmdList->DispatchRays(&dispatchDesc);
 
+	// transition accumulation texture from SRV TO UAV for next frame
+	D3D12_RESOURCE_BARRIER barrier = {};
+	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	barrier.Transition.pResource = accumulationTexture;
+	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	cmdList->ResourceBarrier(1, &barrier);
+
+}
+
+void DX12PathTracer::postProcess() {
+
+	ID3D12DescriptorHeap* heaps[] = { computeDescHeap };
+	cmdList->SetDescriptorHeaps(1, heaps);
+
+	updateToneParams();
+
+	// tone mapping
+
+	cmdList->SetPipelineState(computePSO);
+	cmdList->SetComputeRootSignature(computeRootSignature);
+
+	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = computeDescHeap->GetGPUDescriptorHandleForHeapStart();
+	descriptorIncrementSize = d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+	cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // t0
+	gpuHandle.ptr += descriptorIncrementSize;
+	cmdList->SetComputeRootDescriptorTable(1, gpuHandle); // u1
+	gpuHandle.ptr += descriptorIncrementSize;
+	cmdList->SetComputeRootConstantBufferView(2, toneMappingConstantBuffer->GetGPUVirtualAddress()); // maxLum, etc
+
+	// start compute shader
+
+	UINT groupsX = (renderTarget->GetDesc().Width + 15) / 16;
+	UINT groupsY = (renderTarget->GetDesc().Height + 15) / 16;
+	cmdList->Dispatch(groupsX, groupsY, 1);
+
+	// transition accumulation texture from SRV TO UAV for next frame
+	D3D12_RESOURCE_BARRIER barrier = {};
+	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	barrier.Transition.pResource = accumulationTexture;
+	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+	cmdList->ResourceBarrier(1, &barrier);
+
+}
+
+void DX12PathTracer::present() {
 
 	// copy image onto swap chain's current buffer
 
@@ -1104,13 +1508,11 @@ void DX12PathTracer::render() {
 	// release refernce to backbuffer
 	backBuffer->Release();
 
-
 	cmdList->Close();
 	cmdQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList**>(&cmdList));
 
 	flush();
 	swapChain->Present(1, 0);
-
 }
 
 void DX12PathTracer::quit() {
