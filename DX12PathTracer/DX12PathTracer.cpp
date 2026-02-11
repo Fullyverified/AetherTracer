@@ -771,7 +771,7 @@ void DX12PathTracer::initMaterialBuffer() {
 
 	dx12Materials.clear();
 	uniqueInstancesID.clear();
-	materialIndex.clear();
+	materialIndices.clear();
 
 	uint32_t instanceIndex = -1;
 
@@ -796,7 +796,7 @@ void DX12PathTracer::initMaterialBuffer() {
 		std::cout << "raw color dx12Entity" <<dx12Entity->material->color.x<<", "<<dx12Entity->material->color.y<< ", "<<dx12Entity->material->color.z << std::endl;
 		std::cout << "raw color entity" << dx12Entity->entity->material->color.x << ", " << dx12Entity->entity->material->color.y << ", " << dx12Entity->entity->material->color.z << std::endl;
 
-		materialIndex.push_back(instanceIndex);
+		materialIndices.push_back(instanceIndex);
 	}
 	std::cout << "Values: " << std::endl;
 
@@ -804,20 +804,20 @@ void DX12PathTracer::initMaterialBuffer() {
 		std::cout << "Unqiue Mateiral: " << mat.color.x<<", "<<mat.color.y<<", "<<mat.color.z << std::endl;
 	}
 
-	for (uint32_t num : materialIndex) {
+	for (uint32_t num : materialIndices) {
 		std::cout << "Mateiral Index Buffer: " << num << std::endl;
 	}
 
 
 	if (debug) std::cout << "DX12Materials.size(): " << dx12Materials.size() << std::endl;
-	if (debug) std::cout << "materialIndex.size(): " << materialIndex.size() << std::endl;
+	if (debug) std::cout << "materialIndex.size(): " << materialIndices.size() << std::endl;
 
 
 	size_t materialsSize = dx12Materials.size() * sizeof(DX12Material);
-	size_t indexSize = dx12Materials.size() * sizeof(uint32_t);
+	size_t indexSize = materialIndices.size() * sizeof(uint32_t);
 
 	auto mbUpload = createBuffers(dx12Materials.data(), materialsSize, D3D12_RESOURCE_STATE_COMMON);
-	auto ibUpload = createBuffers(materialIndex.data(), indexSize, D3D12_RESOURCE_STATE_COMMON);
+	auto ibUpload = createBuffers(materialIndices.data(), indexSize, D3D12_RESOURCE_STATE_COMMON);
 
 
 	materialDefaultBuffer = mbUpload.HEAP_DEFAULT_BUFFER;
@@ -1229,8 +1229,6 @@ void DX12PathTracer::initRTShaderTables() {
 void DX12PathTracer::updateToneParams() {
 
 	toneMappingParams->numIts = numFrames;
-
-	std::cout << "num frames: " << numFrames << std::endl;
 
 	if (!toneMappingConstantBuffer) {
 	

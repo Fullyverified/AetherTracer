@@ -86,7 +86,7 @@ void RayGeneration()
         ray.Origin = payload.newPos;
         ray.Direction = payload.newDir;
         
-        finalColor += payload.throughput * payload.color;
+        finalColor += payload.color * payload.throughput;
             
         if (payload.missed)
         {
@@ -156,7 +156,7 @@ void Hit(inout Payload payload, float2 uv)
 
     float3 throughput = dot(worldNormal, wi);
     payload.throughput = throughput;
-    payload.color =  mat.color * mat.emission;
+    payload.color =  mat.color;
 
 }
 

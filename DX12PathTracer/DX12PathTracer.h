@@ -181,7 +181,6 @@ public:
 	std::vector<DX12Entity*> dx12Entitys;
 	std::unordered_map<std::string, DX12Model*> dx12Models;
 	std::unordered_map<std::string, DX12Material*> materials;
-	std::vector<uint32_t> materialIndex;
 	DX12Camera* dx12Camera;
 
 	// acceleration structure
