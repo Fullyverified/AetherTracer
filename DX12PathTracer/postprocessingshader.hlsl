@@ -9,7 +9,7 @@ Texture2D<float4> accumulationTexture : register(t0);
 RWTexture2D<float4> Output : register(u0);
 
 [numthreads(16, 16, 1)]
-void CSmain(uint3 id : SV_DispatchThreadID )
+void main(uint3 id : SV_DispatchThreadID )
 {
     float temp = 1.0f;
     

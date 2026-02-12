@@ -205,6 +205,44 @@ void DX12PathTracer::updateCamera() {
 
 }
 
+void DX12PathTracer::updateRand() {
+
+	for (UINT x = 0; x < renderTarget->GetDesc().Width; x++) {
+
+		for (UINT y = 0; y < renderTarget->GetDesc().Height; y++) {
+
+			UINT state = (x + y * renderTarget->GetDesc().Width + 0xdeadbeefu) ^ (numFrames * 1664525u);
+
+			// PCG hash function
+
+			UINT word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+			word = (word >> 22u) ^ word;
+
+			randPattern[x + y * renderTarget->GetDesc().Width] = word;
+		}
+
+	}
+
+	D3D12_RESOURCE_DESC randDesc = {
+	   .Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+	   .Width = randPattern.size(),
+	   .Height = 1,
+	   .DepthOrArraySize = 1,
+	   .MipLevels = 1,
+	   .Format = DXGI_FORMAT_UNKNOWN,
+	   .SampleDesc = NO_AA,
+	   .Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+	   .Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+	};
+
+	HRESULT hr = d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &randDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&randBuffer));
+	checkHR(hr, nullptr, "Create render target");
+
+	void* mapped = nullptr;
+	randBuffer->Map(0, nullptr, &mapped);
+	memcpy(mapped, randPattern.data(), randPattern.size() * sizeof(UINT));
+	randBuffer->Unmap(0, nullptr);
+}
 // device
 
 void DX12PathTracer::initDevice() {
@@ -351,7 +389,7 @@ void DX12PathTracer::resize(HWND hwnd) {
 		flush();
 	}
 
-
+	randPattern.resize(renderTarget->GetDesc().Width * renderTarget->GetDesc().Height);
 }
 
 // command list and allocator
@@ -953,9 +991,9 @@ void DX12PathTracer::initRTDescriptors() {
 	size_t numBuffers = allVertexBuffers.size();
 	std::cout << "numBuffers size: " << allVertexBuffers.size() << std::endl;
 
-	// Heap size: 1 UAV (accumulation texture) + 1 SRV (scene), + NUM_INSTANCES * (vertex srvs, index srvs) + 1 Material SRV + MaterialIndex SRV + Camera CBV
+	// Heap size: 1 UAV (accumulation texture) + 1 UAV Rand Buffer + 1 SRV (scene), + NUM_INSTANCES * (vertex srvs, index srvs) + 1 Material SRV + MaterialIndex SRV + Camera CBV
 
-	UINT numDescriptors = 2 + numBuffers * 2 + 3;
+	UINT numDescriptors = 3 + numBuffers * 2 + 3;
 
 	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {
 		.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
@@ -979,7 +1017,17 @@ void DX12PathTracer::initRTDescriptors() {
 	d3dDevice->CreateUnorderedAccessView(accumulationTexture, nullptr, &uavDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
-	// slot 1 SRV for TLAS
+	// slot 1 UAV for RNG Buffer
+	uavDesc = {};
+	uavDesc.Format = DXGI_FORMAT_UNKNOWN,
+	uavDesc.Buffer.StructureByteStride = sizeof(UINT),
+	uavDesc.Buffer.NumElements = randPattern.size();
+	uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER,
+
+	d3dDevice->CreateUnorderedAccessView(randBuffer, nullptr, &uavDesc, cpuHandle);
+	cpuHandle.ptr += descriptorIncrementSize;
+
+	// slot 2 SRV for TLAS
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -989,7 +1037,7 @@ void DX12PathTracer::initRTDescriptors() {
 	d3dDevice->CreateShaderResourceView(nullptr, &srvDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
-	// slot 2
+	// slot 3
 	for (auto* vb : allVertexBuffers) {
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
@@ -1002,7 +1050,7 @@ void DX12PathTracer::initRTDescriptors() {
 		cpuHandle.ptr += descriptorIncrementSize;
 		std::cout << "srvNumElementsVertex: " << srvDesc.Buffer.NumElements << std::endl;
 	}
-	// slot 3
+	// slot 4
 	for (auto* ib : allIndexBuffers) {
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Format = DXGI_FORMAT_R32_UINT;
@@ -1016,7 +1064,7 @@ void DX12PathTracer::initRTDescriptors() {
 		std::cout << "srvNumElementsIndex: " << srvDesc.Buffer.NumElements << std::endl;
 	}
 
-	// slot 4 Material Buffer
+	// slot 5 Material Buffer
 	srvDesc = {};
 	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -1027,7 +1075,7 @@ void DX12PathTracer::initRTDescriptors() {
 	d3dDevice->CreateShaderResourceView(materialDefaultBuffer, &srvDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
-	// slot 5 Material Index Buffer
+	// slot 6 Material Index Buffer
 	srvDesc = {};
 	srvDesc.Format = DXGI_FORMAT_R32_UINT;
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -1057,10 +1105,18 @@ void DX12PathTracer::initRTRootSignature() {
 
 	UINT NUM_BUFFERS = static_cast<UINT>(allVertexBuffers.size());
 
-	D3D12_DESCRIPTOR_RANGE uavRange = {
+	D3D12_DESCRIPTOR_RANGE accumRange = {
 	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
 	.NumDescriptors = 1,
 	.BaseShaderRegister = 0,
+	.RegisterSpace = 0,
+	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+	};
+
+	D3D12_DESCRIPTOR_RANGE randRange = {
+	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
+	.NumDescriptors = 1,
+	.BaseShaderRegister = 1,
 	.RegisterSpace = 0,
 	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 	};
@@ -1120,8 +1176,9 @@ void DX12PathTracer::initRTRootSignature() {
 	cameraParam.Descriptor.RegisterSpace = 0;
 	cameraParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-	D3D12_ROOT_PARAMETER params[7] = {												// num desriptor ranges, descriptor range
-		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &uavRange}},
+	D3D12_ROOT_PARAMETER params[8] = {												// num desriptor ranges, descriptor range
+		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &accumRange}},
+		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &randRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &sceneRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &vertexRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &indexRange}},
@@ -1129,10 +1186,10 @@ void DX12PathTracer::initRTRootSignature() {
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &materialIndexRange}},
 	};
 
-	params[6] = cameraParam;
+	params[7] = cameraParam;
 
 	D3D12_ROOT_SIGNATURE_DESC desc = {
-		.NumParameters = 7,
+		.NumParameters = 8,
 		.pParameters = params,
 		.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE
 	};
@@ -1168,7 +1225,7 @@ void DX12PathTracer::initRTPipeline() {
 	};
 
 	D3D12_RAYTRACING_SHADER_CONFIG shaderCfg = {
-	.MaxPayloadSizeInBytes = 56,
+	.MaxPayloadSizeInBytes = 72,
 	.MaxAttributeSizeInBytes = 8, // triangle attribs
 	};
 
@@ -1376,6 +1433,16 @@ void DX12PathTracer::initComputeRootSignature() {
 
 }
 
+void DX12PathTracer::accumulationReset() {
+
+	if (reset) {
+		updateRand();
+
+		// reset accumulationTexutre
+	}
+	
+}
+
 // command submission
 
 void DX12PathTracer::render() {
@@ -1385,6 +1452,7 @@ void DX12PathTracer::render() {
 
 	//updateCamera();
 	updateScene();
+	accumulationReset();
 
 	cmdList->SetPipelineState1(raytracingPSO);
 	cmdList->SetComputeRootSignature(raytracingRootSignature);
@@ -1393,19 +1461,21 @@ void DX12PathTracer::render() {
 	cmdList->SetDescriptorHeaps(1, heaps);
 
 	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = raytracingDescHeap->GetGPUDescriptorHandleForHeapStart();
-	cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // u0 UAV
+	cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // u0 accum UAV
 	gpuHandle.ptr += descriptorIncrementSize;
-	cmdList->SetComputeRootDescriptorTable(1, gpuHandle); // t0 TLAS
+	cmdList->SetComputeRootDescriptorTable(1, gpuHandle); // u1 rand UAV
 	gpuHandle.ptr += descriptorIncrementSize;
-	cmdList->SetComputeRootDescriptorTable(2, gpuHandle); // t1 vertex buffer
+	cmdList->SetComputeRootDescriptorTable(2, gpuHandle); // t0 TLAS
+	gpuHandle.ptr += descriptorIncrementSize;
+	cmdList->SetComputeRootDescriptorTable(3, gpuHandle); // t1 vertex buffer
 	gpuHandle.ptr += descriptorIncrementSize * allVertexBuffers.size();
-	cmdList->SetComputeRootDescriptorTable(3, gpuHandle); // t2 index buffer
+	cmdList->SetComputeRootDescriptorTable(4, gpuHandle); // t2 index buffer
 	gpuHandle.ptr += descriptorIncrementSize * allIndexBuffers.size();
-	cmdList->SetComputeRootDescriptorTable(4, gpuHandle); // t3 material buffer
+	cmdList->SetComputeRootDescriptorTable(5, gpuHandle); // t3 material buffer
 	gpuHandle.ptr += descriptorIncrementSize;
-	cmdList->SetComputeRootDescriptorTable(5, gpuHandle); // t3 material index buffer
+	cmdList->SetComputeRootDescriptorTable(6, gpuHandle); // t3 material index buffer
 
-	cmdList->SetComputeRootConstantBufferView(6, cameraConstantBuffer->GetGPUVirtualAddress()); // b0 camera cbv
+	cmdList->SetComputeRootConstantBufferView(7, cameraConstantBuffer->GetGPUVirtualAddress()); // b0 camera cbv
 
 	// Dispatch rays
 

@@ -116,6 +116,8 @@ public:
 	void initComputePipeline();
 	void initComputeDescriptors();
 
+	void accumulationReset();
+	void updateRand();
 	void updateCamera();
 	void updateToneParams();
 	void updateScene();
@@ -157,9 +159,11 @@ public:
 	ID3D12Resource* renderTarget;
 
 	// accumulation texture
+	ID3D12Resource* randBuffer;
+	std::vector<UINT> randPattern;
 	ID3D12Resource* accumulationTexture;
 	UINT numFrames = 0;
-	bool cameraMoved = false;
+	bool reset = false;
 
 	// Command list and allocator
 
