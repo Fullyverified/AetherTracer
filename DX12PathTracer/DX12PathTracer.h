@@ -80,7 +80,7 @@ public:
 		float pad0;
 
 		DirectX::XMFLOAT4X4 invViewProj;
-		float pad1;
+		UINT frame;
 
 	};
 
@@ -159,7 +159,9 @@ public:
 	ID3D12Resource* renderTarget;
 
 	// accumulation texture
-	ID3D12Resource* randBuffer;
+	ID3D12Resource* randDefaultBuffer;
+	ID3D12Resource* randUploadBuffer;
+
 	std::vector<UINT> randPattern;
 	ID3D12Resource* accumulationTexture;
 	UINT numFrames = 0;

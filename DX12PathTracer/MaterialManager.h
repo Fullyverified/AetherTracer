@@ -42,7 +42,7 @@ public:
 		materials["Blue Plastic"] = new Material{ "Blue Plastic", {0, 0, 1}, 0.5, 0, 1, 0, 0 };
 		materials["Shiny Copper"] = new Material{ "Shiny Copper", {0, 1, 0}, 0, 1, 1, 0, 0 };
 		materials["Mirror"] = new Material{ "Mirror", {1, 1, 1}, 0, 1, 1, 0, 0 };
-		materials["Light"] = new Material{ "Light", {1, 1, 1}, 0, 0, 1, 0, 10 };
+		materials["Light"] = new Material{ "Light", {1, 1, 1}, 0, 0, 1, 0, 20 };
 
 	}
 

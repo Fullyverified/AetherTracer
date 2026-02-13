@@ -11,7 +11,7 @@ RWTexture2D<float4> Output : register(u0);
 [numthreads(16, 16, 1)]
 void main(uint3 id : SV_DispatchThreadID )
 {
-    float temp = 1.0f;
+    float temp = 20.0f;
     
     uint2 dim;
     accumulationTexture.GetDimensions(dim.x, dim.y);
@@ -34,7 +34,6 @@ void main(uint3 id : SV_DispatchThreadID )
         
         accum = pow(accum, invGamma);
        
-
     }
 
     Output[id.xy] = float4(accum, 1.0f);

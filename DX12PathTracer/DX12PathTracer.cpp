@@ -1,5 +1,6 @@
 ﻿#include "DX12PathTracer.h"
 #include <iostream>
+#include <random>
 
 
 bool debug = true;
@@ -111,6 +112,7 @@ void DX12PathTracer::init(HWND hwnd) {
 	initScene();
 	initTopLevel();
 	initMaterialBuffer();
+	updateRand();
 	initRTDescriptors();
 	initRTRootSignature();
 	initRTPipeline();
@@ -138,6 +140,7 @@ void DX12PathTracer::updateCamera() {
 	EntityManager::Camera* entityCamera = entityManager->camera;
 
 	dx12Camera->position = { entityCamera->position.x, entityCamera->position.y, entityCamera->position.z };
+	dx12Camera->frame = numFrames;
 
 	PT::Vector3 position = entityCamera->position;
 	PT::Vector3 right = entityCamera->right;
@@ -207,25 +210,53 @@ void DX12PathTracer::updateCamera() {
 
 void DX12PathTracer::updateRand() {
 
+	std::random_device rd;
+	std::mt19937 gen(rd());
+	std::uniform_int_distribution<UINT> dist;
+
 	for (UINT x = 0; x < renderTarget->GetDesc().Width; x++) {
 
 		for (UINT y = 0; y < renderTarget->GetDesc().Height; y++) {
 
-			UINT state = (x + y * renderTarget->GetDesc().Width + 0xdeadbeefu) ^ (numFrames * 1664525u);
-
+			UINT state = ((y << 16u) | x) ^ (numFrames * 1664525u * static_cast<UINT>(GetTickCount64())) ^ 0xdeadbeefu;
+	
 			// PCG hash function
 
 			UINT word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
 			word = (word >> 22u) ^ word;
 
-			randPattern[x + y * renderTarget->GetDesc().Width] = word;
+			UINT rot = state >> 28u;
+
+			word = (word >> rot) | (word << (32u - rot));
+
+			//randPattern[x + y * renderTarget->GetDesc().Width] = word;
+			//randPattern[x + y * renderTarget->GetDesc().Width] = dist(gen);
+			randPattern[x + y * renderTarget->GetDesc().Width] = x + y * renderTarget->GetDesc().Width;
 		}
-
 	}
+	
 
-	D3D12_RESOURCE_DESC randDesc = {
+	// Create CPU Heap Buffer
+	D3D12_HEAP_PROPERTIES uploadHeap = { .Type = D3D12_HEAP_TYPE_UPLOAD };
+
+	D3D12_RESOURCE_DESC uploadDesc = {
+	.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+	   .Width = randPattern.size() * sizeof(UINT),
+	   .Height = 1,
+	   .DepthOrArraySize = 1,
+	   .MipLevels = 1,
+	   .Format = DXGI_FORMAT_UNKNOWN,
+	   .SampleDesc = NO_AA,
+	   .Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+	   .Flags = D3D12_RESOURCE_FLAG_NONE,
+	};
+
+	d3dDevice->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &uploadDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&randUploadBuffer));
+
+	// GPU Buffer
+	D3D12_RESOURCE_DESC defaultDesc = {
 	   .Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
-	   .Width = randPattern.size(),
+	   .Width = randPattern.size() * sizeof(UINT),
 	   .Height = 1,
 	   .DepthOrArraySize = 1,
 	   .MipLevels = 1,
@@ -235,14 +266,52 @@ void DX12PathTracer::updateRand() {
 	   .Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
 	};
 
-	HRESULT hr = d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &randDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&randBuffer));
-	checkHR(hr, nullptr, "Create render target");
+	HRESULT hr = d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &defaultDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&randDefaultBuffer));
+	checkHR(hr, nullptr, "Create Rand Buffer");
 
 	void* mapped = nullptr;
-	randBuffer->Map(0, nullptr, &mapped);
+	randUploadBuffer->Map(0, nullptr, &mapped);
 	memcpy(mapped, randPattern.data(), randPattern.size() * sizeof(UINT));
-	randBuffer->Unmap(0, nullptr);
+	randUploadBuffer->Unmap(0, nullptr);
+
+
+	//size_t randSize = randPattern.size() * sizeof(UINT);
+
+	//auto randUpload = createBuffers(randPattern.data(), randSize, D3D12_RESOURCE_STATE_COMMON);
+
+	//// Reset cmdList and cmdAllc
+	//cmdAlloc->Reset();
+	//cmdList->Reset(cmdAlloc, nullptr);
+
+	//std::cout << "Pushing buffer to VRAM" << std::endl;
+
+	//// Barrier - transition buffer target to COPY_DEST
+	//D3D12_RESOURCE_BARRIER barrier = {};
+	//barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	//barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+	//barrier.Transition.pResource = randUpload.HEAP_DEFAULT_BUFFER;
+	//barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+	//barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+	//barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	//cmdList->ResourceBarrier(1, &barrier);
+
+	//// Copy to GPU
+	//cmdList->CopyBufferRegion(randUpload.HEAP_DEFAULT_BUFFER, 0, randUpload.HEAP_UPLOAD_BUFFER, 0, randSize);
+
+	//// Barrier - transition to final state
+	//barrier.Transition.pResource = randUpload.HEAP_DEFAULT_BUFFER;
+	//barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+	//barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	//cmdList->ResourceBarrier(1, &barrier);
+
+	//// Execute upload of buffers
+	//cmdList->Close();
+	//ID3D12CommandList* lists[] = { cmdList };
+	//cmdQueue->ExecuteCommandLists(1, lists);
+	//flush();
 }
+
+
 // device
 
 void DX12PathTracer::initDevice() {
@@ -687,7 +756,7 @@ void DX12PathTracer::updateTransforms() {
 
 	//if (debug) std::cout << "Update Transforms" << std::endl;
 
-	auto time = static_cast<float>(GetTickCount64()) / 1000;
+	auto time = static_cast<float>(GetTickCount64()) / 1000.0f;
 
 	size_t currentInstance = 0;
 
@@ -820,7 +889,7 @@ void DX12PathTracer::initMaterialBuffer() {
 		std::cout << "Material name: "<<dx12Entity->entity->material->name << std::endl;
 
 		if (uniqueInstancesID.find(dx12Entity->entity->material->name) == uniqueInstancesID.end()) {
-			instanceIndex++;
+			instanceIndex = dx12Materials.size();
 			uniqueInstancesID[dx12Entity->entity->material->name] = instanceIndex;
 			dx12Materials.push_back(*dx12Entity->material);
 			std::cout << "Not in map " << std::endl;
@@ -831,22 +900,10 @@ void DX12PathTracer::initMaterialBuffer() {
 			std::cout << "In map " << std::endl;
 			std::cout << "instanceIndex: " << instanceIndex << std::endl;
 		}
-		std::cout << "raw color dx12Entity" <<dx12Entity->material->color.x<<", "<<dx12Entity->material->color.y<< ", "<<dx12Entity->material->color.z << std::endl;
-		std::cout << "raw color entity" << dx12Entity->entity->material->color.x << ", " << dx12Entity->entity->material->color.y << ", " << dx12Entity->entity->material->color.z << std::endl;
-
+	
 		materialIndices.push_back(instanceIndex);
 	}
-	std::cout << "Values: " << std::endl;
-
-	for (DX12Material mat : dx12Materials) {
-		std::cout << "Unqiue Mateiral: " << mat.color.x<<", "<<mat.color.y<<", "<<mat.color.z << std::endl;
-	}
-
-	for (uint32_t num : materialIndices) {
-		std::cout << "Mateiral Index Buffer: " << num << std::endl;
-	}
-
-
+	
 	if (debug) std::cout << "DX12Materials.size(): " << dx12Materials.size() << std::endl;
 	if (debug) std::cout << "materialIndex.size(): " << materialIndices.size() << std::endl;
 
@@ -1024,7 +1081,7 @@ void DX12PathTracer::initRTDescriptors() {
 	uavDesc.Buffer.NumElements = randPattern.size();
 	uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER,
 
-	d3dDevice->CreateUnorderedAccessView(randBuffer, nullptr, &uavDesc, cpuHandle);
+	d3dDevice->CreateUnorderedAccessView(randDefaultBuffer, nullptr, &uavDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
 	// slot 2 SRV for TLAS
@@ -1436,7 +1493,7 @@ void DX12PathTracer::initComputeRootSignature() {
 void DX12PathTracer::accumulationReset() {
 
 	if (reset) {
-		updateRand();
+		//updateRand();
 
 		// reset accumulationTexutre
 	}
@@ -1450,7 +1507,7 @@ void DX12PathTracer::render() {
 	cmdAlloc->Reset();
 	cmdList->Reset(cmdAlloc, nullptr);
 
-	//updateCamera();
+	updateCamera();
 	updateScene();
 	accumulationReset();
 
