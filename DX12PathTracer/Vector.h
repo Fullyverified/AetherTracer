@@ -55,8 +55,6 @@ namespace PT	{
 		forward.y = sinf(pitchRad);
 		forward.z = -sinf(yawRad) * cosf(pitchRad); // -z forward
 
-		std::cout << "Un-normalized Forward:";
-		Print(forward);
 		return Normalize(forward);
 	}
 

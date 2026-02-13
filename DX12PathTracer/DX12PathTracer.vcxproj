@@ -133,11 +133,14 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="ComputeStage.cpp" />
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="MaterialManager.cpp" />
     <ClCompile Include="MeshManager.cpp" />
-    <ClCompile Include="DX12PathTracer.cpp" />
+    <ClCompile Include="DX12Renderer.cpp" />
     <ClCompile Include="EntityManager.cpp" />
+    <ClCompile Include="RayTracingStage.cpp" />
+    <ClCompile Include="ResourceManager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="maxluminanceshader.hlsl">
@@ -204,10 +207,13 @@
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ComputeStage.h" />
     <ClInclude Include="MaterialManager.h" />
     <ClInclude Include="MeshManager.h" />
-    <ClInclude Include="DX12PathTracer.h" />
+    <ClInclude Include="DX12Renderer.h" />
     <ClInclude Include="EntityManager.h" />
+    <ClInclude Include="RayTracingStage.h" />
+    <ClInclude Include="ResourceManager.h" />
     <ClInclude Include="Vector.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -1,4 +1,4 @@
-﻿#include "DX12PathTracer.h"
+﻿#include "DX12Renderer.h"
 #include "EntityManager.h"
 #include "MeshManager.h"
 #include "MaterialManager.h"
@@ -13,8 +13,8 @@ int main() {
 	materialManager->initDefaultMaterials();
 	entityManager->initScene();
 
-	DX12PathTracer dx12pathtracer{entityManager, meshManager, materialManager};
-	dx12pathtracer.run();
+	DX12Renderer dx12renderer{entityManager, meshManager, materialManager};
+	dx12renderer.run();
 
 	return 0;
 }
