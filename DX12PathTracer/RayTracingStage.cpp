@@ -3,23 +3,13 @@
 
 bool debugstage = true;
 
-RayTracingStage::RayTracingStage(ResourceManager* resourceManager, MeshManager* meshManager, MaterialManager* materialManager, EntityManager* entityManager, ID3D12GraphicsCommandList4* cmdList, ID3D12Device5* d3dDevice)
-	: rm(resourceManager), meshManager(meshManager), materialManager(materialManager), entityManager(entityManager), cmdList(cmdList), d3dDevice(d3dDevice) { 
+RayTracingStage::RayTracingStage(ResourceManager* resourceManager, MeshManager* meshManager, MaterialManager* materialManager, EntityManager* entityManager)
+	: rm(resourceManager), meshManager(meshManager), materialManager(materialManager), entityManager(entityManager) { 
 
 };
 
-void RayTracingStage::init() {
+void RayTracingStage::initStage() {
 
-	updateCamera();
-	initAccumulationTexture();
-	loadShaders();
-	initModelBuffers();
-	initModelBLAS();
-	initScene();
-	initTopLevel();
-	initMaterialBuffer();
-	initVertexIndexBuffers();
-	updateTransforms();
 	initRTDescriptors();
 	initRTRootSignature();
 	initRTPipeline();
@@ -42,11 +32,14 @@ void RayTracingStage::initAccumulationTexture() {
 	accumDesc.DepthOrArraySize = 1;
 	accumDesc.MipLevels = 1;
 	accumDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-	accumDesc.SampleDesc = {};
+	accumDesc.SampleDesc = rm->NO_AA;
 	accumDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
-	HRESULT hr = d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &accumDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&rm->accumulationTexture));
+	HRESULT hr = rm->d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &accumDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&rm->accumulationTexture));
 	checkHR(hr, nullptr, "Create accumulation texture");
+	rm->accumulationTexture->SetName(L"Accumulation Texture");
+
+
 }
 
 
@@ -72,8 +65,13 @@ void RayTracingStage::initModelBuffers() {
 			size_t ibSize = mesh.indices.size() * sizeof(uint32_t);
 			std::cout << ": vbSize=" << vbSize << " bytes, ibSize=" << ibSize << " bytes" << std::endl;
 
-			ResourceManager::Buffer* vertexBuffer = createBuffers(mesh.vertices.data(), vbSize, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-			ResourceManager::Buffer* indexBuffer = createBuffers(mesh.indices.data(), ibSize, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+			ResourceManager::Buffer* vertexBuffer = createBuffers(mesh.vertices.data(), vbSize, D3D12_RESOURCE_STATE_COMMON, false);
+			ResourceManager::Buffer* indexBuffer = createBuffers(mesh.indices.data(), ibSize, D3D12_RESOURCE_STATE_COMMON, false);
+
+			vertexBuffer->uploadBuffers->SetName(L"Object Vertex Upload Buffer");
+			indexBuffer->uploadBuffers->SetName(L"Object Index Upload Buffer");
+			vertexBuffer->defaultBuffers->SetName(L"Object Vertex Default Buffer");
+			indexBuffer->defaultBuffers->SetName(L"Object Index Default Buffer");
 
 			// CPU memory buffers = HEAP_UPLOAD
 			// GPU memory buffers = HEAP_DEFAULT
@@ -106,8 +104,8 @@ void RayTracingStage::initModelBuffers() {
 
 			std::cout << "Mesh " << i << ": vbSize=" << vbSize << " bytes, ibSize=" << ibSize << " bytes\n" << std::endl;
 
-			pushBuffer(dx12Model->vertexBuffers[i], vbSize, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-			pushBuffer(dx12Model->indexBuffers[i], ibSize, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+			pushBuffer(dx12Model->vertexBuffers[i], vbSize, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+			pushBuffer(dx12Model->indexBuffers[i], ibSize, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
 		}
 
@@ -117,6 +115,7 @@ void RayTracingStage::initModelBuffers() {
 
 ID3D12Resource* RayTracingStage::makeAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, UINT64* updateScratchSize) {
 
+
 	auto makeBuffer = [this](UINT64 size, auto initialState) {
 		D3D12_RESOURCE_DESC desc = {};
 		desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -124,13 +123,14 @@ ID3D12Resource* RayTracingStage::makeAccelerationStructure(const D3D12_BUILD_RAY
 		desc.Height = 1;
 		desc.DepthOrArraySize = 1;
 		desc.MipLevels = 1;
-		desc.SampleDesc = {};
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
 		desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 		desc.Width = size;
 		ID3D12Resource* buffer;
 
-		HRESULT hr = d3dDevice->CreateCommittedResource(
+		HRESULT hr = rm->d3dDevice->CreateCommittedResource(
 			&DEFAULT_HEAP,
 			D3D12_HEAP_FLAG_NONE,
 			&desc,
@@ -151,7 +151,7 @@ ID3D12Resource* RayTracingStage::makeAccelerationStructure(const D3D12_BUILD_RAY
 	}
 
 	D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo;
-	d3dDevice->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuildInfo);
+	rm->d3dDevice->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuildInfo);
 
 	// debug
 	std::cout << "Prebuild: scratch=" << prebuildInfo.ScratchDataSizeInBytes
@@ -167,6 +167,9 @@ ID3D12Resource* RayTracingStage::makeAccelerationStructure(const D3D12_BUILD_RAY
 	auto* scratch = makeBuffer(prebuildInfo.ScratchDataSizeInBytes, D3D12_RESOURCE_STATE_COMMON);
 	auto* as = makeBuffer(prebuildInfo.ResultDataMaxSizeInBytes, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
 
+	scratch->SetName(L"scratch buffer");
+	as->SetName(L"BLAS");
+
 	if (scratch == nullptr) std::cout << "scratch nullptr" << std::endl;
 	if (as == nullptr) std::cout << "BLAS nullptr" << std::endl;
 
@@ -175,8 +178,14 @@ ID3D12Resource* RayTracingStage::makeAccelerationStructure(const D3D12_BUILD_RAY
 
 	std::cout << "executing cmd list " << std::endl;
 
-	cmdList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
-	
+	rm->cmdList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+	rm->cmdList->Close();
+	rm->cmdQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList**>(&rm->cmdList));
+	flush();
+	rm->cmdAlloc->Reset();
+	rm->cmdList->Reset(rm->cmdAlloc, nullptr);
+
+
 	scratch->Release();
 	return as;
 
@@ -223,9 +232,8 @@ void RayTracingStage::initModelBLAS() {
 		std::cout << "making accel struc " << std::endl;
 
 		model->BLAS = makeAccelerationStructure(inputs);
-
+		model->BLAS->SetName(L"Model BLAS");
 	}
-
 
 }
 
@@ -273,12 +281,15 @@ void RayTracingStage::updateCamera() {
 
 
 	if (!rm->cameraConstantBuffer) {
+		rm->cameraConstantBuffer = new ResourceManager::Buffer{};
+		rm->cameraConstantBuffer = createBuffers(rm->dx12Camera, sizeof(ResourceManager::DX12Camera), D3D12_RESOURCE_STATE_COMMON, false);
+		rm->cameraConstantBuffer->defaultBuffers->SetName(L"Camera Default Buffer");
 		createCBV(rm->cameraConstantBuffer, sizeof(ResourceManager::DX12Camera));
 	}
 
 	void* mapped = nullptr;
 	rm->cameraConstantBuffer->defaultBuffers->Map(0, nullptr, &mapped);
-	memcpy(mapped, &rm->dx12Camera, sizeof(ResourceManager::DX12Camera));
+	memcpy(mapped, rm->dx12Camera, sizeof(ResourceManager::DX12Camera));
 	rm->cameraConstantBuffer->defaultBuffers->Unmap(0, nullptr);
 
 	// upload heap is always visible for cbv, no barries
@@ -321,18 +332,18 @@ void RayTracingStage::initScene() {
 
 	// create instances
 
-	NUM_INSTANCES = static_cast<UINT>(rm->dx12Entitys.size());
+	rm->NUM_INSTANCES = static_cast<UINT>(rm->dx12Entitys.size());
 
 	D3D12_RESOURCE_DESC instancesDesc{};
 	instancesDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	instancesDesc.Width = sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * NUM_INSTANCES;
+	instancesDesc.Width = sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * rm->NUM_INSTANCES;
 	instancesDesc.Height = 1;
 	instancesDesc.DepthOrArraySize = 1;
 	instancesDesc.MipLevels = 1;
-	instancesDesc.SampleDesc = {};
+	instancesDesc.SampleDesc = rm->NO_AA;
 	instancesDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-	HRESULT hr = d3dDevice->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &instancesDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&rm->instances));
+	HRESULT hr = rm->d3dDevice->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &instancesDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&rm->instances));
 	checkHR(hr, nullptr, "initScene, CreateComittedResource: ");
 
 	rm->instances->Map(0, nullptr, reinterpret_cast<void**>(&rm->instanceData));
@@ -377,9 +388,7 @@ void RayTracingStage::initScene() {
 
 void RayTracingStage::updateTransforms() {
 
-	//updateCamera();
-
-	//if (debug) std::cout << "Update Transforms" << std::endl;
+	//if (debugstage) std::cout << "Update Transforms" << std::endl;
 
 	auto time = static_cast<float>(GetTickCount64()) / 1000.0f;
 
@@ -398,6 +407,7 @@ void RayTracingStage::updateTransforms() {
 
 		auto* ptr = reinterpret_cast<DirectX::XMFLOAT3X4*>(&rm->instanceData[currentInstance].Transform);
 		XMStoreFloat3x4(ptr, transform);
+
 		currentInstance++;
 
 	}
@@ -448,51 +458,77 @@ void RayTracingStage::initMaterialBuffer() {
 	size_t materialsSize = rm->dx12Materials.size() * sizeof(ResourceManager::DX12Material);
 	size_t indexSize = rm->materialIndices.size() * sizeof(uint32_t);
 
-	rm->materialsBuffer = createBuffers(rm->dx12Materials.data(), materialsSize, D3D12_RESOURCE_STATE_COMMON);
-	rm->materialIndexBuffer = createBuffers(rm->materialIndices.data(), indexSize, D3D12_RESOURCE_STATE_COMMON);
+	rm->materialsBuffer = createBuffers(rm->dx12Materials.data(), materialsSize, D3D12_RESOURCE_STATE_COMMON, false);
+	rm->materialIndexBuffer = createBuffers(rm->materialIndices.data(), indexSize, D3D12_RESOURCE_STATE_COMMON, false);
+
+	rm->materialsBuffer->uploadBuffers->SetName(L"Materials Upload Buffer");
+	rm->materialIndexBuffer->uploadBuffers->SetName(L"Materials Index Upload Default Buffer");
+	rm->materialsBuffer->defaultBuffers->SetName(L"Materials Default Buffer");
+	rm->materialIndexBuffer->defaultBuffers->SetName(L"Materials Index Default Buffer");
 
 	pushBuffer(rm->materialsBuffer, materialsSize, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 	pushBuffer(rm->materialIndexBuffer, indexSize, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+
+
+	if (debugstage) std::cout << "Finished material buffer" <<  std::endl;
 
 }
 
 // TLAS
 
-ID3D12Resource* RayTracingStage::makeTLAS(ID3D12Resource* instances, UINT numInstances, UINT64* updateScratchSize) {
-
-	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
-	.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL,
-	.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE,
-	.NumDescs = numInstances,
-	.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
-	.InstanceDescs = instances->GetGPUVirtualAddress() };
-
-	return makeAccelerationStructure(inputs, updateScratchSize);
-}
-
-void RayTracingStage::initTopLevel() {
+void RayTracingStage::initTopLevelAS() {
 
 	if (debugstage) std::cout << "initTopLevel()" << std::endl;
 
 	UINT64 updateScratchSize;
-	rm->tlas = makeTLAS(rm->instances, NUM_INSTANCES, &updateScratchSize);
+	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
+	.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL,
+	.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE,
+	.NumDescs = rm->NUM_INSTANCES,
+	.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
+	.InstanceDescs = rm->instances->GetGPUVirtualAddress() };
 
-	// create scratch space for TLAS updates in advance
-	D3D12_RESOURCE_DESC tlasDesc{};
-	tlasDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	tlasDesc.Width = 0;// will be changed in copies
-	tlasDesc.Height = 1;
-	tlasDesc.DepthOrArraySize = 1;
-	tlasDesc.MipLevels = 1;
-	tlasDesc.SampleDesc = {};
-	tlasDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-	//tlasDesc.Width = std::max(updateScratchSize, 8ULL);     // WARP bug workaround: use 8 if the required size was reported as less
-	tlasDesc.Width = updateScratchSize;
-	tlasDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+	std::cout << "NUM_INSTANCES = "<<rm->NUM_INSTANCES << std::endl;
 
-	HRESULT hr = d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &tlasDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&rm->tlasUpdateScratch));
-	checkHR(hr, nullptr, "initTopLevel: CreateCommittedResource");
+	D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo;
+	rm->d3dDevice->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuildInfo);
 
+	D3D12_RESOURCE_DESC desc = {};
+	desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	desc.Width = prebuildInfo.ScratchDataSizeInBytes;
+	desc.Height = 1;
+	desc.DepthOrArraySize = 1;
+	desc.MipLevels = 1;
+	desc.SampleDesc = rm->NO_AA;
+	desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+	HRESULT hr = rm->d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&rm->tlasscratch));
+	checkHR(hr, nullptr, "CreateCommittedResource for AS failed");
+
+	hr = rm->d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, nullptr, IID_PPV_ARGS(&rm->tlas));
+	checkHR(hr, nullptr, "CreateCommittedResource for AS failed");
+		
+	rm->tlasscratch->SetName(L"Scratch");
+	rm->tlas->SetName(L"AS");
+
+	if (rm->tlasscratch == nullptr) std::cout << "scratch nullptr" << std::endl;
+	if (rm->tlas == nullptr) std::cout << "BLAS nullptr" << std::endl;
+
+	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {
+	.DestAccelerationStructureData = rm->tlas->GetGPUVirtualAddress(), .Inputs = inputs, .ScratchAccelerationStructureData = rm->tlasscratch->GetGPUVirtualAddress() };
+
+	std::cout << "executing cmd list " << std::endl;
+
+	rm->cmdList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+
+	rm->cmdList->Close();
+	rm->cmdQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList**>(&rm->cmdList));
+	flush();
+	rm->cmdAlloc->Reset();
+	rm->cmdList->Reset(rm->cmdAlloc, nullptr);
+
+	rm->tlasscratch->Release();
 }
 
 
@@ -503,12 +539,16 @@ void RayTracingStage::initVertexIndexBuffers() {
 
 	rm->uniqueInstances.clear();
 	for (ResourceManager::DX12Entity* dx12SceneObject : rm->dx12Entitys) {
+
+
 		if (rm->uniqueInstances.count(dx12SceneObject->entity->name) == 0) {
+
 			rm->uniqueInstances.insert(dx12SceneObject->entity->name);
 			std::vector<ResourceManager::Buffer*> indexBuffers = dx12SceneObject->model->indexBuffers;
 			std::vector<ResourceManager::Buffer*> vertexBuffers = dx12SceneObject->model->vertexBuffers;
 
 			size_t bufferSize = indexBuffers.size();
+
 			for (size_t i = 0; i < bufferSize; i++) {
 				rm->allIndexBuffers.push_back(indexBuffers[i]);
 				rm->allVertexBuffers.push_back(vertexBuffers[i]);
@@ -524,11 +564,13 @@ void RayTracingStage::initRTDescriptors() {
 
 	// Heap size: 1 UAV (accumulation texture) + 1 UAV Rand Buffer + 1 SRV (scene), + NUM_INSTANCES * (vertex srvs, index srvs) + 1 Material SRV + MaterialIndex SRV + Camera CBV
 
+	if (debugstage) std::cout << "creating SRVs" << std::endl;
+
 	UINT num_modelBuffers = rm->allVertexBuffers.size();
 
 	UINT numDescriptors = 3 + num_modelBuffers * 2 + 3;
 
-	descriptorIncrementSize = d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	descriptorIncrementSize = rm->d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {
 		.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
@@ -536,10 +578,8 @@ void RayTracingStage::initRTDescriptors() {
 		.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
 	};
 
-	HRESULT hr = d3dDevice->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&raytracingDescHeap));
+	HRESULT hr = rm->d3dDevice->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&raytracingDescHeap));
 	checkHR(hr, nullptr, "CreateDescriptorHeap");
-
-	if (debugstage) std::cout << "creating SRVs" << std::endl;
 
 	// Create views
 	D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = raytracingDescHeap->GetCPUDescriptorHandleForHeapStart();
@@ -549,7 +589,7 @@ void RayTracingStage::initRTDescriptors() {
 		.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
 		.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D
 	};
-	d3dDevice->CreateUnorderedAccessView(rm->accumulationTexture, nullptr, &uavDesc, cpuHandle);
+	rm->d3dDevice->CreateUnorderedAccessView(rm->accumulationTexture, nullptr, &uavDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
 	// slot 1 UAV for RNG Buffer
@@ -559,7 +599,7 @@ void RayTracingStage::initRTDescriptors() {
 		uavDesc.Buffer.NumElements = rm->randPattern.size();
 	uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER,
 
-		d3dDevice->CreateUnorderedAccessView(rm->randBuffer->defaultBuffers, nullptr, &uavDesc, cpuHandle);
+		rm->d3dDevice->CreateUnorderedAccessView(rm->randBuffer->defaultBuffers, nullptr, &uavDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
 	// slot 2 SRV for TLAS
@@ -569,7 +609,7 @@ void RayTracingStage::initRTDescriptors() {
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
 	srvDesc.RaytracingAccelerationStructure.Location = rm->tlas->GetGPUVirtualAddress();
 
-	d3dDevice->CreateShaderResourceView(nullptr, &srvDesc, cpuHandle);
+	rm->d3dDevice->CreateShaderResourceView(nullptr, &srvDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
 	// slot 3
@@ -581,7 +621,7 @@ void RayTracingStage::initRTDescriptors() {
 		srvDesc.Buffer.FirstElement = 0;
 		srvDesc.Buffer.NumElements = static_cast<UINT>(vertexBuffer->defaultBuffers->GetDesc().Width / sizeof(MeshManager::Vertex));
 		srvDesc.Buffer.StructureByteStride = sizeof(MeshManager::Vertex);
-		d3dDevice->CreateShaderResourceView(vertexBuffer->defaultBuffers, &srvDesc, cpuHandle);
+		rm->d3dDevice->CreateShaderResourceView(vertexBuffer->defaultBuffers, &srvDesc, cpuHandle);
 		cpuHandle.ptr += descriptorIncrementSize;
 		std::cout << "srvNumElementsVertex: " << srvDesc.Buffer.NumElements << std::endl;
 	}
@@ -594,7 +634,7 @@ void RayTracingStage::initRTDescriptors() {
 		srvDesc.Buffer.FirstElement = 0;
 		srvDesc.Buffer.NumElements = static_cast<UINT>(indexBuffer->defaultBuffers->GetDesc().Width / sizeof(uint32_t));
 		srvDesc.Buffer.StructureByteStride = 0;
-		d3dDevice->CreateShaderResourceView(indexBuffer->defaultBuffers, &srvDesc, cpuHandle);
+		rm->d3dDevice->CreateShaderResourceView(indexBuffer->defaultBuffers, &srvDesc, cpuHandle);
 		cpuHandle.ptr += descriptorIncrementSize;
 		std::cout << "srvNumElementsIndex: " << srvDesc.Buffer.NumElements << std::endl;
 	}
@@ -607,7 +647,7 @@ void RayTracingStage::initRTDescriptors() {
 	srvDesc.Buffer.FirstElement = 0;
 	srvDesc.Buffer.NumElements = static_cast<UINT>(rm->dx12Materials.size());
 	srvDesc.Buffer.StructureByteStride = sizeof(ResourceManager::DX12Material);
-	d3dDevice->CreateShaderResourceView(rm->materialsBuffer->defaultBuffers, &srvDesc, cpuHandle);
+	rm->d3dDevice->CreateShaderResourceView(rm->materialsBuffer->defaultBuffers, &srvDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
 	// slot 6 Material Index Buffer
@@ -618,7 +658,7 @@ void RayTracingStage::initRTDescriptors() {
 	srvDesc.Buffer.FirstElement = 0;
 	srvDesc.Buffer.NumElements = static_cast<UINT>(rm->materialIndexBuffer->defaultBuffers->GetDesc().Width / sizeof(uint32_t));
 	srvDesc.Buffer.StructureByteStride = 0;
-	d3dDevice->CreateShaderResourceView(rm->materialIndexBuffer->defaultBuffers, &srvDesc, cpuHandle);
+	rm->d3dDevice->CreateShaderResourceView(rm->materialIndexBuffer->defaultBuffers, &srvDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
 	// Camera CBV
@@ -626,7 +666,7 @@ void RayTracingStage::initRTDescriptors() {
 	cbvDesc.BufferLocation = rm->cameraConstantBuffer->defaultBuffers->GetGPUVirtualAddress();
 	cbvDesc.SizeInBytes = sizeof(ResourceManager::DX12Camera);
 
-	d3dDevice->CreateConstantBufferView(&cbvDesc, cpuHandle);
+	rm->d3dDevice->CreateConstantBufferView(&cbvDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
 }
@@ -732,7 +772,7 @@ void RayTracingStage::initRTRootSignature() {
 	checkHR(hr, nullptr, "D3D12SerializeRootSignature: ");
 
 
-	hr = d3dDevice->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&raytracingRootSignature));
+	hr = rm->d3dDevice->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&raytracingRootSignature));
 	checkHR(hr, errorblob, "CreateRootSignature: ");
 
 	blob->Release();
@@ -779,7 +819,7 @@ void RayTracingStage::initRTPipeline() {
 		.NumSubobjects = std::size(subobjects),
 		.pSubobjects = subobjects };
 
-	HRESULT hr = d3dDevice->CreateStateObject(&psoDesc, IID_PPV_ARGS(&raytracingPSO));
+	HRESULT hr = rm->d3dDevice->CreateStateObject(&psoDesc, IID_PPV_ARGS(&raytracingPSO));
 	checkHR(hr, nullptr, "initPipeLine, CreateStateObject: ");
 
 }
@@ -795,10 +835,10 @@ void RayTracingStage::initRTShaderTables() {
 	shaderIDDesc.Height = 1;
 	shaderIDDesc.DepthOrArraySize = 1;
 	shaderIDDesc.MipLevels = 1;
-	shaderIDDesc.SampleDesc = {};
+	shaderIDDesc.SampleDesc = rm->NO_AA;
 	shaderIDDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-	HRESULT hr = d3dDevice->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &shaderIDDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&shaderIDs));
+	HRESULT hr = rm->d3dDevice->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &shaderIDDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&shaderIDs));
 	checkHR(hr, nullptr, "initShaderTables, CreateCommittedResource: ");
 	ID3D12StateObjectProperties* props;
 	raytracingPSO->QueryInterface(&props);
@@ -823,28 +863,28 @@ void RayTracingStage::initRTShaderTables() {
 
 void RayTracingStage::traceRays() {
 
-	cmdList->SetPipelineState1(raytracingPSO);
-	cmdList->SetComputeRootSignature(raytracingRootSignature);
+	rm->cmdList->SetPipelineState1(raytracingPSO);
+	rm->cmdList->SetComputeRootSignature(raytracingRootSignature);
 
 	ID3D12DescriptorHeap* heaps[] = { raytracingDescHeap };
-	cmdList->SetDescriptorHeaps(1, heaps);
+	rm->cmdList->SetDescriptorHeaps(1, heaps);
 
 	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = raytracingDescHeap->GetGPUDescriptorHandleForHeapStart();
-	cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // u0 accum UAV
+	rm->cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // u0 accum UAV
 	gpuHandle.ptr += descriptorIncrementSize;
-	cmdList->SetComputeRootDescriptorTable(1, gpuHandle); // u1 rand UAV
+	rm->cmdList->SetComputeRootDescriptorTable(1, gpuHandle); // u1 rand UAV
 	gpuHandle.ptr += descriptorIncrementSize;
-	cmdList->SetComputeRootDescriptorTable(2, gpuHandle); // t0 TLAS
+	rm->cmdList->SetComputeRootDescriptorTable(2, gpuHandle); // t0 TLAS
 	gpuHandle.ptr += descriptorIncrementSize;
-	cmdList->SetComputeRootDescriptorTable(3, gpuHandle); // t1 vertex buffer
+	rm->cmdList->SetComputeRootDescriptorTable(3, gpuHandle); // t1 vertex buffer
 	gpuHandle.ptr += descriptorIncrementSize * rm->allVertexBuffers.size();
-	cmdList->SetComputeRootDescriptorTable(4, gpuHandle); // t2 index buffer
+	rm->cmdList->SetComputeRootDescriptorTable(4, gpuHandle); // t2 index buffer
 	gpuHandle.ptr += descriptorIncrementSize * rm->allIndexBuffers.size();
-	cmdList->SetComputeRootDescriptorTable(5, gpuHandle); // t3 material buffer
+	rm->cmdList->SetComputeRootDescriptorTable(5, gpuHandle); // t3 material buffer
 	gpuHandle.ptr += descriptorIncrementSize;
-	cmdList->SetComputeRootDescriptorTable(6, gpuHandle); // t3 material index buffer
+	rm->cmdList->SetComputeRootDescriptorTable(6, gpuHandle); // t3 material index buffer
 
-	cmdList->SetComputeRootConstantBufferView(7, rm->cameraConstantBuffer->defaultBuffers->GetGPUVirtualAddress()); // b0 camera cbv
+	rm->cmdList->SetComputeRootConstantBufferView(7, rm->cameraConstantBuffer->defaultBuffers->GetGPUVirtualAddress()); // b0 camera cbv
 
 	// Dispatch rays
 
@@ -863,7 +903,7 @@ void RayTracingStage::traceRays() {
 		.Width = static_cast<UINT>(rtDesc.Width),
 		.Height = rtDesc.Height,
 		.Depth = 1 };
-	cmdList->DispatchRays(&dispatchDesc);
+	rm->cmdList->DispatchRays(&dispatchDesc);
 
 	// transition accumulation texture from SRV TO UAV for next frame
 	D3D12_RESOURCE_BARRIER barrier = {};
@@ -871,12 +911,12 @@ void RayTracingStage::traceRays() {
 	barrier.Transition.pResource = rm->accumulationTexture;
 	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-	cmdList->ResourceBarrier(1, &barrier);
+	rm->cmdList->ResourceBarrier(1, &barrier);
 
 }
 
 
-ResourceManager::Buffer* RayTracingStage::createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState) {
+ResourceManager::Buffer* RayTracingStage::createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState, bool UAV) {
 	std::cout << "byteSize: " << byteSize << std::endl;
 
 	// CPU Buffer (upload buffer)
@@ -886,7 +926,7 @@ ResourceManager::Buffer* RayTracingStage::createBuffers(const void* data, size_t
 		.Height = 1,
 		.DepthOrArraySize = 1,
 		.MipLevels = 1,
-		.SampleDesc = {},
+		.SampleDesc = rm->NO_AA,
 		.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
 		.Flags = D3D12_RESOURCE_FLAG_NONE,
 	};
@@ -894,7 +934,7 @@ ResourceManager::Buffer* RayTracingStage::createBuffers(const void* data, size_t
 
 
 	ID3D12Resource* upload;
-	d3dDevice->CreateCommittedResource(
+	rm->d3dDevice->CreateCommittedResource(
 		&UPLOAD_HEAP,
 		D3D12_HEAP_FLAG_NONE,
 		&DESC,
@@ -913,9 +953,12 @@ ResourceManager::Buffer* RayTracingStage::createBuffers(const void* data, size_t
 	D3D12_HEAP_PROPERTIES DEFAULT_HEAP = { .Type = D3D12_HEAP_TYPE_DEFAULT };
 
 	// Create target buffer in DEFAULT heap
-	DESC.Flags = D3D12_RESOURCE_FLAG_NONE; // or ALLOW_UNORDERED_ACCESS if needed later
+	if (UAV) {
+		DESC.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+	}
+	
 	ID3D12Resource* target = nullptr;
-	d3dDevice->CreateCommittedResource(
+	rm->d3dDevice->CreateCommittedResource(
 		&DEFAULT_HEAP,
 		D3D12_HEAP_FLAG_NONE,
 		&DESC,
@@ -940,16 +983,16 @@ void RayTracingStage::pushBuffer(ResourceManager::Buffer* buffer, size_t dataSiz
 	barrier.Transition.StateBefore = state_before;
 	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
 	barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-	cmdList->ResourceBarrier(1, &barrier);
+	rm->cmdList->ResourceBarrier(1, &barrier);
 
 	// Copy to GPU
-	cmdList->CopyBufferRegion(buffer->defaultBuffers, 0, buffer->uploadBuffers, 0, dataSize);
+	rm->cmdList->CopyBufferRegion(buffer->defaultBuffers, 0, buffer->uploadBuffers, 0, dataSize);
 
 	// Barrier - transition to final state
 	barrier.Transition.pResource = buffer->defaultBuffers;
 	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 	barrier.Transition.StateAfter = state_after;
-	cmdList->ResourceBarrier(1, &barrier);
+	rm->cmdList->ResourceBarrier(1, &barrier);
 }
 
 void RayTracingStage::createCBV(ResourceManager::Buffer* buffer, size_t byteSize) {
@@ -960,13 +1003,13 @@ void RayTracingStage::createCBV(ResourceManager::Buffer* buffer, size_t byteSize
 	cbDesc.Height = 1;
 	cbDesc.DepthOrArraySize = 1;
 	cbDesc.MipLevels = 1;
-	cbDesc.SampleDesc = {};
+	cbDesc.SampleDesc = rm->NO_AA;;
 	cbDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 	cbDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
 	D3D12_HEAP_PROPERTIES uploadHeapProps = { D3D12_HEAP_TYPE_UPLOAD };
 
-	HRESULT hr = d3dDevice->CreateCommittedResource(
+	HRESULT hr = rm->d3dDevice->CreateCommittedResource(
 		&uploadHeapProps,
 		D3D12_HEAP_FLAG_NONE,
 		&cbDesc,
@@ -988,4 +1031,9 @@ void RayTracingStage::checkHR(HRESULT hr, ID3DBlob* errorblob, std::string conte
 		OutputDebugStringA((char*)errorblob->GetBufferPointer());
 		errorblob->Release();
 	}
+}
+
+void RayTracingStage::flush() {
+	rm->cmdQueue->Signal(rm->fence, rm->fenceState);
+	rm->fence->SetEventOnCompletion(rm->fenceState++, nullptr);
 }

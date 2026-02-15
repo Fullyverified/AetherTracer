@@ -8,8 +8,6 @@ bool debug = true;
 DX12Renderer::DX12Renderer(EntityManager* entityManager, MeshManager* meshManager, MaterialManager* materialManager) : entityManager(entityManager), meshManager(meshManager), materialManager(materialManager) {
 
 	rm = new ResourceManager();
-	computeStage = new ComputeStage(rm, meshManager, materialManager, entityManager, cmdList, d3dDevice);
-	raytracingStage = new RayTracingStage(rm, meshManager, materialManager, entityManager, cmdList, d3dDevice);
 
 }
 
@@ -88,10 +86,7 @@ void DX12Renderer::run() {
 			TranslateMessage(&msg);
 			DispatchMessageW(&msg);
 		}
-		TranslateMessage(&msg);
-		DispatchMessageW(&msg);
 
-		rm->num_frames++;
 		// start of cmdList
 		render();
 		present();
@@ -107,8 +102,52 @@ void DX12Renderer::init(HWND hwnd) {
 	initSurfaces(hwnd);
 	initCommand();
 
-	raytracingStage->init();
-	computeStage->init();
+	computeStage = new ComputeStage(rm, meshManager, materialManager, entityManager);
+	raytracingStage = new RayTracingStage(rm, meshManager, materialManager, entityManager);
+
+	rm->dx12Camera = new ResourceManager::DX12Camera{};
+
+	resize(hwnd);
+
+	std::cout << "init RTResources" << std::endl;
+
+	raytracingStage->loadShaders();
+	raytracingStage->updateCamera();
+	raytracingStage->initAccumulationTexture();
+	raytracingStage->initModelBuffers();
+
+	rm->cmdList->Close();
+	rm->cmdQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList**>(&rm->cmdList));
+	flush();
+	rm->cmdAlloc->Reset();
+	rm->cmdList->Reset(rm->cmdAlloc, nullptr);
+
+	raytracingStage->initModelBLAS();
+
+
+	raytracingStage->initScene();
+	raytracingStage->initTopLevelAS();
+	raytracingStage->initMaterialBuffer();
+	raytracingStage->initVertexIndexBuffers();
+	raytracingStage->updateTransforms();
+
+	std::cout << "init ComputeResources" << std::endl;
+	computeStage->loadShaders();
+	computeStage->initRenderTarget();
+	computeStage->updateRand();
+	computeStage->updateToneParams();
+
+	std::cout << "raytracingStage->initStage();" << std::endl;
+	raytracingStage->initStage();
+	std::cout << "computeStage->initStage();" << std::endl;
+	computeStage->initStage();
+
+	rm->cmdList->Close();
+	rm->cmdQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList**>(&rm->cmdList));
+	flush();
+
+	rm->cmdAlloc->Reset();
+	rm->cmdList->Reset(rm->cmdAlloc, nullptr);
 
 }
 
@@ -116,8 +155,8 @@ void DX12Renderer::init(HWND hwnd) {
 
 void DX12Renderer::initDevice() {
 
-	if (FAILED(CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&factory))))
-		CreateDXGIFactory2(0, IID_PPV_ARGS(&factory));
+	if (FAILED(CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&rm->factory))))
+		CreateDXGIFactory2(0, IID_PPV_ARGS(&rm->factory));
 
 
 	// D3D12 debug layer
@@ -127,16 +166,16 @@ void DX12Renderer::initDevice() {
 
 	// feature level dx12_2
 	IDXGIAdapter* adapter = nullptr;
-	D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&d3dDevice));
+	D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&rm->d3dDevice));
 
 	// command queue
 	D3D12_COMMAND_QUEUE_DESC cmdQueueDesc = { .Type = D3D12_COMMAND_LIST_TYPE_DIRECT, };
-	d3dDevice->CreateCommandQueue(&cmdQueueDesc, IID_PPV_ARGS(&cmdQueue));
+	rm->d3dDevice->CreateCommandQueue(&cmdQueueDesc, IID_PPV_ARGS(&rm->cmdQueue));
 	// fence
-	d3dDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+	rm->d3dDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&rm->fence));
 
 
-	if (d3dDevice == nullptr) {
+	if (rm->d3dDevice == nullptr) {
 		std::cout << "device nullptr" << std::endl;
 	}
 	else std::cout << "device exists" << std::endl;
@@ -146,100 +185,73 @@ void DX12Renderer::initDevice() {
 // cpu gpu syncronization
 
 void DX12Renderer::flush() {
-	static UINT64 value = 1;
-	cmdQueue->Signal(fence, value);
-	fence->SetEventOnCompletion(value++, nullptr);
+	rm->cmdQueue->Signal(rm->fence, rm->fenceState);
+	rm->fence->SetEventOnCompletion(rm->fenceState++, nullptr);
 }
 
-// swap chain and uav
+// swap chain
 
 void DX12Renderer::initSurfaces(HWND hwnd) {
-
 
 	// 8-bit SRGB
 	// alternative: R16G16B16A16_FLOAT for HDR
 	DXGI_SWAP_CHAIN_DESC1 scDesc = {
 	   .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
-	   .SampleDesc = {},
+	   .SampleDesc = rm->NO_AA,
 	   .BufferCount = 2,
 	   .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
 	};
 	IDXGISwapChain1* swapChain1;
 
-	HRESULT hr = factory->CreateSwapChainForHwnd(cmdQueue, hwnd, &scDesc, nullptr, nullptr, &swapChain1);
+	HRESULT hr = rm->factory->CreateSwapChainForHwnd(rm->cmdQueue, hwnd, &scDesc, nullptr, nullptr, &swapChain1);
 	checkHR(hr, nullptr, "Create swap chain: ");
 
 
-	swapChain1->QueryInterface(&swapChain);
+	swapChain1->QueryInterface(&rm->swapChain);
 	swapChain1->Release();
 
 	// early factory release
-	factory->Release();
+	rm->factory->Release();
 
-	resize(hwnd);
 }
 
 // render target
 void DX12Renderer::resize(HWND hwnd) {
 
 	std::cout << "Resize called" << std::endl;
-	if (!swapChain) {
+	if (!rm->swapChain) {
 		std::cout << "Resize: swapChain is null - skipping" << std::endl;
 		return;
 	}
 
 	RECT rect;
 	GetClientRect(hwnd, &rect);
-	auto width = std::max<UINT>(rect.right - rect.left, 1);
-	auto height = std::max<UINT>(rect.bottom - rect.top, 1);
+	rm->width = std::max<UINT>(rect.right - rect.left, 1);
+	rm->height = std::max<UINT>(rect.bottom - rect.top, 1);
 
 	flush();
 
-	swapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
-
-	if (rm->accumulationTexture) rm->accumulationTexture->Release();
-	if (rm->renderTarget) rm->renderTarget->Release();
+	rm->swapChain->ResizeBuffers(0, rm->width, rm->height, DXGI_FORMAT_UNKNOWN, 0);
 
 	// Update render target and accumulation texture
-	// BROKEN
-	if (false) {
-
-		UINT descriptorIncrementSize = d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-
-		D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
-			.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
-			.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D };
-		d3dDevice->CreateUnorderedAccessView(rm->accumulationTexture, nullptr, &uavDesc, raytracingStage->raytracingDescHeap->GetCPUDescriptorHandleForHeapStart());
-
-		D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = computeStage->computeDescHeap->GetCPUDescriptorHandleForHeapStart();
-
-		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MipLevels = 1;
-		srvDesc.Texture2D.MostDetailedMip = 0;
-		d3dDevice->CreateShaderResourceView(rm->accumulationTexture, &srvDesc, cpuHandle);
-		cpuHandle.ptr += descriptorIncrementSize;
-		
-
-		uavDesc = {
-			.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
-			.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D };
-		d3dDevice->CreateUnorderedAccessView(rm->renderTarget, nullptr, &uavDesc, computeStage->computeDescHeap->GetCPUDescriptorHandleForHeapStart());
-
-		
+	
+	if (rm->renderTarget) {
+		rm->randPattern.resize(rm->width * rm->height);
 	}
-
-	rm->randPattern.resize(rm->renderTarget->GetDesc().Width * rm->renderTarget->GetDesc().Height);
 }
 
 // command list and allocator
 
 void DX12Renderer::initCommand() {
 	// only one
-	d3dDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc));
-	d3dDevice->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&cmdList));
+	rm->d3dDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&rm->cmdAlloc));
+	rm->d3dDevice->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&rm->cmdList));
+
+	rm->cmdAlloc->SetName(L"Default cmdAlloc");
+	rm->cmdList->SetName(L"Default cmdList");
+
+	rm->cmdAlloc->Reset();
+	rm->cmdList->Reset(rm->cmdAlloc, nullptr);
 }
 
 // create default heap buffer
@@ -247,14 +259,13 @@ DX12Renderer::UploadDefaultBufferPair DX12Renderer::createBuffers(const void* da
 	std::cout << "byteSize: " << byteSize << std::endl;
 
 	// CPU Buffer (upload buffer)
-	DXGI_SAMPLE_DESC NO_AA = { .Count = 1, .Quality = 0 };
 	D3D12_RESOURCE_DESC DESC = {
 		.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 		.Width = byteSize,
 		.Height = 1,
 		.DepthOrArraySize = 1,
 		.MipLevels = 1,
-		.SampleDesc = NO_AA,
+		.SampleDesc = rm->NO_AA,
 		.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
 		.Flags = D3D12_RESOURCE_FLAG_NONE,
 	};
@@ -262,7 +273,7 @@ DX12Renderer::UploadDefaultBufferPair DX12Renderer::createBuffers(const void* da
 
 
 	ID3D12Resource* upload;
-	d3dDevice->CreateCommittedResource(
+	rm->d3dDevice->CreateCommittedResource(
 		&UPLOAD_HEAP,
 		D3D12_HEAP_FLAG_NONE,
 		&DESC,
@@ -283,7 +294,7 @@ DX12Renderer::UploadDefaultBufferPair DX12Renderer::createBuffers(const void* da
 	// Create target buffer in DEFAULT heap
 	DESC.Flags = D3D12_RESOURCE_FLAG_NONE; // or ALLOW_UNORDERED_ACCESS if needed later
 	ID3D12Resource* target = nullptr;
-	d3dDevice->CreateCommittedResource(
+	rm->d3dDevice->CreateCommittedResource(
 		&DEFAULT_HEAP,
 		D3D12_HEAP_FLAG_NONE,
 		&DESC,
@@ -310,6 +321,9 @@ void DX12Renderer::accumulationReset() {
 
 void DX12Renderer::render() {
 
+	rm->num_frames++;
+	raytracingStage->updateCamera();
+	computeStage->updateToneParams();
 	raytracingStage->traceRays();
 	computeStage->postProcess();
 
@@ -320,7 +334,8 @@ void DX12Renderer::present() {
 	// copy image onto swap chain's current buffer
 
 	ID3D12Resource* backBuffer;
-	swapChain->GetBuffer(swapChain->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&backBuffer));
+	rm->swapChain->GetBuffer(rm->swapChain->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&backBuffer));
+	backBuffer->SetName(L"Back Buffer");
 
 	auto barrier = [this](auto* resource, auto before, auto after) {
 
@@ -331,7 +346,7 @@ void DX12Renderer::present() {
 						.StateAfter = after},
 		};
 
-		cmdList->ResourceBarrier(1, &rb);
+		rm->cmdList->ResourceBarrier(1, &rb);
 
 		};
 
@@ -340,7 +355,7 @@ void DX12Renderer::present() {
 	barrier(rm->renderTarget, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
 	barrier(backBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST);
 
-	cmdList->CopyResource(backBuffer, rm->renderTarget);
+	rm->cmdList->CopyResource(backBuffer, rm->renderTarget);
 
 	barrier(backBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
 	barrier(rm->renderTarget, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -348,16 +363,16 @@ void DX12Renderer::present() {
 	// release refernce to backbuffer
 	backBuffer->Release();
 
-	cmdList->Close();
-	ID3D12CommandList* lists[] = { cmdList };
-	cmdQueue->ExecuteCommandLists(1, lists);
+	rm->cmdList->Close();
+	ID3D12CommandList* lists[] = { rm->cmdList };
+	rm->cmdQueue->ExecuteCommandLists(1, lists);
 
 	flush();
-	swapChain->Present(1, 0);
+	rm->swapChain->Present(1, 0);
 
 	// To finish whole frame??
-	cmdAlloc->Reset();
-	cmdList->Reset(cmdAlloc, nullptr);
+	rm->cmdAlloc->Reset();
+	rm->cmdList->Reset(rm->cmdAlloc, nullptr);
 }
 
 void DX12Renderer::quit() {

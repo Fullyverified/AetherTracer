@@ -1,4 +1,4 @@
-﻿struct [raypayload] Payload // 58 bytes
+﻿struct [raypayload] Payload // 72 bytes
 {
     float3 throughput : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     float3 emission : read(caller, closesthit, miss) : write(caller, closesthit, miss);
@@ -75,7 +75,7 @@ void RayGeneration()
     ray.Direction = normalize(worldPos - camPos);
     ray.TMin = 0.001;
     ray.TMax = 1e20f;
-    
+
     Payload payload;
     payload.throughput = float3(1.0f, 1.0f, 1.0f);
     payload.emission = float3(0.0f, 0.0f, 0.0f);
@@ -93,10 +93,7 @@ void RayGeneration()
         ray.Direction = payload.dir;
        
         finalColor += payload.throughput * payload.emission;
-
-        
-        payload.emission = 0.0f;
-        
+     
         if (payload.missed || payload.emission.x > 0.0f || payload.emission.y > 0.0f || payload.emission.z > 0.0f)
         {
             break;
@@ -104,8 +101,7 @@ void RayGeneration()
 
     }
     
-    accumulationTexture[pixelIndex] += float4(finalColor, 1.0f);
-
+    accumulationTexture[pixelIndex] += float4(payload.throughput, 1.0f);
 }
 
 float random(uint2 pixelIndex, uint2 dims)
@@ -237,14 +233,14 @@ void Shade(inout Payload payload, float2 uv)
     payload.pos = rayPos;
     
     //float3 wi = WorldRayDirection() * -1.0f;
-    //payload.emission = mat.color * dot(worldNormal, wi);
-
-    //payload.emission = mat.color;
     
     payload.emission = mat.color * mat.emission;
     
     payload.dir = DirectionSampler(payload, mat, worldNormal, uv);
-    payload.throughput *= throughputUpdate(payload, mat, worldNormal, uv);    
+    payload.throughput *= throughputUpdate(payload, mat, worldNormal, uv);
+    //payload.throughput = mat.color;
+    
+    return;
 }
 
 [shader("closesthit")]
@@ -253,6 +249,7 @@ void ClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes att
     float2 uv = attribs.barycentrics;
     payload.numBounces++;
     Shade(payload, uv);
+
     return;
     
 }
@@ -264,7 +261,8 @@ void Miss(inout Payload payload)
 {
     float slope = normalize(WorldRayDirection()).y;
     float t = saturate(slope * 5 + 0.5);
-    //  payload.color += payload.throughput * lerp(skyBottom, skyTop, t);
-    
+    payload.throughput *= lerp(skyBottom, skyTop, t);
+
     payload.missed = true;
+    return;
 }

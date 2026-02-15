@@ -3,6 +3,10 @@
 #include <vector>
 #include "DirectXMath.h"
 #include <d3d12.h>
+#include <dxgi1_4.h>
+#include <d3dcompiler.h> // for compiling shaders
+#pragma comment(lib, "d3d12")
+#pragma comment(lib, "dxgi")
 
 #include "MaterialManager.h"
 #include "EntityManager.h"
@@ -15,6 +19,7 @@ class ResourceManager {
 public:
 	ResourceManager() {};
 	~ResourceManager() {};
+
 
 // Utility
 
@@ -96,7 +101,7 @@ public:
 
 	// TLAS
 	ID3D12Resource* tlas;
-	ID3D12Resource* tlasUpdateScratch;
+	ID3D12Resource* tlasscratch;
 
 	UINT NUM_INSTANCES = 0;
 	ID3D12Resource* instances;
@@ -125,9 +130,30 @@ public:
 	std::vector<UINT> randPattern;
 
 
-	UINT num_frames;
+	UINT num_frames = 30;
 
-	UINT width = 1200;
-	UINT height = 1200;
+	UINT width;
+	UINT height;
+
+	DXGI_SAMPLE_DESC NO_AA = { .Count = 1, .Quality = 0 };
+
+
+
+
+	// device init
+	IDXGIFactory4* factory;
+	ID3D12Device5* d3dDevice;
+	ID3D12CommandQueue* cmdQueue;
+	ID3D12Fence* fence;
+	UINT64 fenceState = 1;
+
+
+	// swap chain and uav
+	IDXGISwapChain3* swapChain;
+
+	// Command list and allocator
+
+	ID3D12CommandAllocator* cmdAlloc; // block of memory
+	ID3D12GraphicsCommandList4* cmdList;
 };
 

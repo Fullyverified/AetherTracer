@@ -12,16 +12,16 @@ class ComputeStage {
 
 public:
 
-	ComputeStage(ResourceManager* resourceManager, MeshManager* meshManager, MaterialManager* materialManager, EntityManager* entityManager, ID3D12GraphicsCommandList4* cmdList, ID3D12Device5* d3dDevice);
+	ComputeStage(ResourceManager* resourceManager, MeshManager* meshManager, MaterialManager* materialManager, EntityManager* entityManager);
 	~ComputeStage() {};
 
-	void init();
+	void loadShaders();
 	void initComputeRootSignature();
 	void initComputePipeline();
 	void initComputeDescriptors();
 
-	void loadShaders();
 
+	void initStage();
 	void initRenderTarget();
 	void updateRand();
 	void updateToneParams();
@@ -29,8 +29,9 @@ public:
 	void postProcess();
 
 	void checkHR(HRESULT hr, ID3DBlob* errorblob, std::string context);
+	void flush();
 
-	ResourceManager::Buffer* createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState);
+	ResourceManager::Buffer* createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState, bool UAV);
 	void createCBV(ResourceManager::Buffer* buffer, size_t byteSize);
 	void pushBuffer(ResourceManager::Buffer* buffer, size_t dataSize, D3D12_RESOURCE_STATES state_before, D3D12_RESOURCE_STATES state_after);
 
@@ -40,10 +41,6 @@ public:
 	ID3D12DescriptorHeap* computeDescHeap;
 
 	UINT descriptorIncrementSize;
-
-	// shared
-	ID3D12GraphicsCommandList4* cmdList;
-	ID3D12Device5* d3dDevice;
 
 	// shader loading
 	ID3DBlob* csBlob;

@@ -37,5 +37,4 @@ void main(uint3 id : SV_DispatchThreadID )
     }
 
     Output[id.xy] = float4(accum, 1.0f);
-
 }

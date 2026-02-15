@@ -4,14 +4,11 @@
 void EntityManager::initScene() {
 
     camera->position = { -2, 0, 0 };
-    camera->rotation = { 0 , 0 };
+    camera->rotation = { -1 , 0 };
 
     //sceneObjects.emplace_back(new SceneObject{ "cube", {-2, 0, 1}, {0, 0, 0} });
     //sceneObjects.emplace_back(new SceneObject{ "weirdTriangle", {0, 0, 0}, {0, 0, 0} });
     //entitys.emplace_back(new Entity{ "companionCubeOne", {5, 0, 0}, {0, 0, 0}, materialManager->materials["Blue Plastic"] });
-
-    //entitys.emplace_back(new Entity{ "cube", {6, 6, 0}, {0, 0, 0}, materialManager->materials["Light"] }); // light
-
 
     entitys.emplace_back(new Entity{ "cornell", {6, -6, 0}, {0, 0, 0}, materialManager->materials["White Plastic"] }); // floor
 
@@ -24,8 +21,8 @@ void EntityManager::initScene() {
 
     entitys.emplace_back(new Entity{ "cube", {6, 3.925, 0}, {0, 0, 0}, materialManager->materials["Light"] }); // light
 
-    entitys.emplace_back(new Entity{ "sphere", {6, -2.25, -1.5}, {0, 0, 0}, materialManager->materials["Red Plastic"] });
-    entitys.emplace_back(new Entity{ "cube", {6, -2, 1.5}, {0, 0, 0}, materialManager->materials["White Plastic"] });
+    entitys.emplace_back(new Entity{ "sphere", {6, -2.25, -1.5}, {0, 1, 0}, materialManager->materials["Red Plastic"] });
+    entitys.emplace_back(new Entity{ "cube", {6, -2, 1.5}, {0, 1, 0}, materialManager->materials["White Plastic"] });
 
    
     for (Entity* entity : entitys) {

@@ -12,10 +12,10 @@ class RayTracingStage {
 
 public:
 
-	RayTracingStage(ResourceManager* resourceManager, MeshManager* meshManager, MaterialManager* materialManager, EntityManager* entityManager, ID3D12GraphicsCommandList4* cmdList, ID3D12Device5* d3dDevice);
+	RayTracingStage(ResourceManager* resourceManager, MeshManager* meshManager, MaterialManager* materialManager, EntityManager* entityManager);
 	~RayTracingStage() {};
 
-	void init();
+	void loadShaders();
 	void initAccumulationTexture();
 	void initModelBuffers();
 	void initModelBLAS();
@@ -23,11 +23,11 @@ public:
 	void updateCamera();
 	void initScene();
 	void initMaterialBuffer();
-	void initTopLevel();
+	void initTopLevelAS();
 	void initVertexIndexBuffers();
 
-	void loadShaders();
 
+	void initStage();
 	void initRTDescriptors();
 	void initRTRootSignature();
 	void initRTPipeline();
@@ -36,16 +36,14 @@ public:
 	void traceRays();
 
 	void checkHR(HRESULT hr, ID3DBlob* errorblob, std::string context);
+	void flush();
 
-	ResourceManager::Buffer* createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState);
+	ResourceManager::Buffer* createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState, bool UAV);
 	void createCBV(ResourceManager::Buffer* buffer, size_t byteSize);
 	void pushBuffer(ResourceManager::Buffer* buffer, size_t dataSize, D3D12_RESOURCE_STATES state_before, D3D12_RESOURCE_STATES state_after);
 	
 
 	ID3D12Resource* makeAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, UINT64* updateScratchSize = nullptr);
-	ID3D12Resource* makeTLAS(ID3D12Resource* instances, UINT numInstances, UINT64* updateScratchSize);
-
-	UINT NUM_INSTANCES = 0;
 
 	// RT root signature and ray tracing pso
 	ID3D12RootSignature* raytracingRootSignature;
@@ -53,10 +51,6 @@ public:
 	ID3D12DescriptorHeap* raytracingDescHeap;
 
 	UINT descriptorIncrementSize;
-
-	// shared
-	ID3D12GraphicsCommandList4* cmdList;
-	ID3D12Device5* d3dDevice;
 
 	// shader tables
 	UINT64 NUM_SHADER_IDS = 3;

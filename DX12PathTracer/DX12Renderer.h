@@ -55,20 +55,6 @@ public:
 
 	UploadDefaultBufferPair createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState);
 	
-	// device init
-	IDXGIFactory4* factory;
-	ID3D12Device5* d3dDevice;
-	ID3D12CommandQueue* cmdQueue;
-	ID3D12Fence* fence;
-
-	// swap chain and uav
-	IDXGISwapChain3* swapChain;
-
-	// Command list and allocator
-
-	ID3D12CommandAllocator* cmdAlloc; // block of memory
-	ID3D12GraphicsCommandList4* cmdList;
-
 	bool reset = false;
 
 	// managers
