@@ -2,112 +2,30 @@
 #include <iostream>
 #include <random>
 
-
 bool debug = true;
 
-DX12Renderer::DX12Renderer(EntityManager* entityManager, MeshManager* meshManager, MaterialManager* materialManager) : entityManager(entityManager), meshManager(meshManager), materialManager(materialManager) {
+DX12Renderer::DX12Renderer(EntityManager* entityManager, MeshManager* meshManager, MaterialManager* materialManager, Window* window) : entityManager(entityManager), meshManager(meshManager), materialManager(materialManager), window(window) {
 
 	rm = new ResourceManager();
 
 }
 
+void DX12Renderer::init() {
 
-LRESULT WINAPI DX12Renderer::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-	// Store 'this' pointer during WM_NCCREATE
-	if (msg == WM_NCCREATE) {
-		auto* cs = reinterpret_cast<CREATESTRUCT*>(lparam);
-		SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
-		return TRUE;
-	}
-
-	// Retrieve 'this'
-	DX12Renderer* self = reinterpret_cast<DX12Renderer*>(
-		GetWindowLongPtr(hwnd, GWLP_USERDATA));
-
-	switch (msg) {
-	case WM_SIZE:
-	case WM_SIZING:
-		if (self)
-			self->resize(hwnd);
-		return 0;
-
-	case WM_CLOSE:
-		std::cout << "WM_CLOSE received\n";
-		PostQuitMessage(0);
-		return 0;
-
-	case WM_DESTROY:
-		std::cout << "WM_DESTROY received\n";
-		PostQuitMessage(0);
-		return 0;
-
-	case WM_CREATE:
-		std::cout << "WM_CREATE received\n";
-		return 0;
-
-	default:
-		return DefWindowProcW(hwnd, msg, wparam, lparam);
-	}
-}
-
-void DX12Renderer::run() {
-
-	std::cout << "making window" << std::endl;
-
-	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-	// make a window
-	WNDCLASSW wcw = { .lpfnWndProc = &WndProc,
-				 .hCursor = LoadCursor(nullptr, IDC_ARROW),
-				 .lpszClassName = L"DxrTutorialClass" };
-	RegisterClassW(&wcw);
-	HWND hwnd = CreateWindowExW(0, L"DxrTutorialClass", L"DXR tutorial", WS_VISIBLE | WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-		/*width=*/1200, /*height=*/1200, nullptr, nullptr, nullptr, this);
-
-	if (!hwnd) {
-		std::cerr << "CreateWindowExW failed: " << GetLastError() << std::endl;
-		return;
-	}
-
-	std::cout << "Window created successfully, HWND = " << hwnd << std::endl;
-
-
-	std::cout << "init(hwnd)" << std::endl;
-
-	// initialize DirectX
-	init(hwnd);
-
-	if (debug) std::cout << "render loop" << std::endl;
-
-	// run a msg loop until quit msg is received
-	for (MSG msg;;) {
-		while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-			if (msg.message == WM_QUIT)
-				return;
-			TranslateMessage(&msg);
-			DispatchMessageW(&msg);
-		}
-
-		// start of cmdList
-		render();
-		present();
-		// end of cmdList
-	}
-
-
-}
-
-void DX12Renderer::init(HWND hwnd) {
+	rm->hwnd = static_cast<HWND>(window->getNativeHandle());
 
 	initDevice();
-	initSurfaces(hwnd);
+	initSurfaces();
 	initCommand();
+
+	//initImgui();
 
 	computeStage = new ComputeStage(rm, meshManager, materialManager, entityManager);
 	raytracingStage = new RayTracingStage(rm, meshManager, materialManager, entityManager);
 
 	rm->dx12Camera = new ResourceManager::DX12Camera{};
 
-	resize(hwnd);
+	resize();
 
 	std::cout << "init RTResources" << std::endl;
 
@@ -151,6 +69,62 @@ void DX12Renderer::init(HWND hwnd) {
 
 }
 
+void DX12Renderer::initImgui() {
+
+	// thanks grok
+
+	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+	rtvHeapDesc.NumDescriptors = 2;  // Matches your swap chain buffer count
+	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	rm->d3dDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rm->rtvHeap));
+
+	// Create RTVs for each backbuffer
+	for (UINT i = 0; i < 2; ++i) {
+		ID3D12Resource* backBuffer = nullptr;
+		rm->swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
+		D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rm->rtvHeap->GetCPUDescriptorHandleForHeapStart();
+		UINT rtvInc = rm->d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+		rtvHandle.ptr += i * rtvInc;
+		rm->d3dDevice->CreateRenderTargetView(backBuffer, nullptr, rtvHandle);
+		backBuffer->Release();
+	}
+
+	// Create SRV heap for ImGui (font texture)
+	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
+	srvHeapDesc.NumDescriptors = 1;  // Minimal for ImGui
+	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	rm->d3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&rm->imguiSrvHeap));
+
+	// Initialize ImGui
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Optional: Enable keyboard nav
+	ImGui_ImplSDL3_InitForD3D(window->getSDLHandle());
+	D3D12_CPU_DESCRIPTOR_HANDLE fontCpuHandle = rm->imguiSrvHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE fontGpuHandle = rm->imguiSrvHeap->GetGPUDescriptorHandleForHeapStart();
+	ImGui_ImplDX12_Init(rm->d3dDevice, 2, DXGI_FORMAT_R8G8B8A8_UNORM, rm->imguiSrvHeap, fontCpuHandle, fontGpuHandle);
+	ImGui::StyleColorsDark();  // Or your preferred style
+
+}
+
+void DX12Renderer::resizeImgui() {
+	// thanks grok
+	for (UINT i = 0; i < 2; ++i) {
+		ID3D12Resource* backBuffer = nullptr;
+		rm->swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
+		D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rm->rtvHeap->GetCPUDescriptorHandleForHeapStart();
+		UINT rtvInc = rm->d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+		rtvHandle.ptr += i * rtvInc;
+		rm->d3dDevice->CreateRenderTargetView(backBuffer, nullptr, rtvHandle);
+		backBuffer->Release();
+	}
+
+	// Update ImGui display size
+	ImGui_ImplDX12_InvalidateDeviceObjects();  // Handle device changes
+}
+
 // device
 
 void DX12Renderer::initDevice() {
@@ -160,9 +134,15 @@ void DX12Renderer::initDevice() {
 
 
 	// D3D12 debug layer
-	if (ID3D12Debug* debug;
-		SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))
-		debug->EnableDebugLayer(), debug->Release();
+	if (ID3D12Debug* debug; SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
+		debug->EnableDebugLayer();
+		debug->Release();
+	}
+
+	if (ID3D12Debug1* debug1; SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug1)))) {
+		debug1->SetEnableGPUBasedValidation(true);
+		debug1->Release();
+	}
 
 	// feature level dx12_2
 	IDXGIAdapter* adapter = nullptr;
@@ -191,7 +171,7 @@ void DX12Renderer::flush() {
 
 // swap chain
 
-void DX12Renderer::initSurfaces(HWND hwnd) {
+void DX12Renderer::initSurfaces() {
 
 	// 8-bit SRGB
 	// alternative: R16G16B16A16_FLOAT for HDR
@@ -203,7 +183,7 @@ void DX12Renderer::initSurfaces(HWND hwnd) {
 	};
 	IDXGISwapChain1* swapChain1;
 
-	HRESULT hr = rm->factory->CreateSwapChainForHwnd(rm->cmdQueue, hwnd, &scDesc, nullptr, nullptr, &swapChain1);
+	HRESULT hr = rm->factory->CreateSwapChainForHwnd(rm->cmdQueue, rm->hwnd, &scDesc, nullptr, nullptr, &swapChain1);
 	checkHR(hr, nullptr, "Create swap chain: ");
 
 
@@ -216,7 +196,7 @@ void DX12Renderer::initSurfaces(HWND hwnd) {
 }
 
 // render target
-void DX12Renderer::resize(HWND hwnd) {
+void DX12Renderer::resize() {
 
 	std::cout << "Resize called" << std::endl;
 	if (!rm->swapChain) {
@@ -225,7 +205,7 @@ void DX12Renderer::resize(HWND hwnd) {
 	}
 
 	RECT rect;
-	GetClientRect(hwnd, &rect);
+	GetClientRect(rm->hwnd, &rect);
 	rm->width = std::max<UINT>(rect.right - rect.left, 1);
 	rm->height = std::max<UINT>(rect.bottom - rect.top, 1);
 
@@ -320,19 +300,26 @@ void DX12Renderer::accumulationReset() {
 // command submission
 
 void DX12Renderer::render() {
+	std::cout << "numRays: " << rm->num_frames << std::endl;
 
-	rm->num_frames++;
+	rm->num_frames = 1;
 	raytracingStage->updateCamera();
 	computeStage->updateToneParams();
 	raytracingStage->traceRays();
 	computeStage->postProcess();
+	//imguiRender();
 
+
+}
+
+void DX12Renderer::imguiRender() {
+
+	
 }
 
 void DX12Renderer::present() {
 
 	// copy image onto swap chain's current buffer
-
 	ID3D12Resource* backBuffer;
 	rm->swapChain->GetBuffer(rm->swapChain->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&backBuffer));
 	backBuffer->SetName(L"Back Buffer");
@@ -357,6 +344,24 @@ void DX12Renderer::present() {
 
 	rm->cmdList->CopyResource(backBuffer, rm->renderTarget);
 
+
+	// transition backbuffer for imgui rendering
+	//barrier(backBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+	//// set descriptor heap for imgui
+	//ID3D12DescriptorHeap* heaps[] = { rm->imguiSrvHeap };
+	//rm->cmdList->SetDescriptorHeaps(_countof(heaps), heaps);
+
+	//// set RTV for backbuffer
+	//UINT rtvInc = rm->d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+	//D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rm->rtvHeap->GetCPUDescriptorHandleForHeapStart();
+	//rtvHandle.ptr += rm->swapChain->GetCurrentBackBufferIndex() * rtvInc;
+	//rm->cmdList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+
+	//ImGui::Render();
+	//ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), rm->cmdList);
+
+	// transition for present
 	barrier(backBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
 	barrier(rm->renderTarget, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 

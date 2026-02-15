@@ -138,15 +138,13 @@ public:
 	DXGI_SAMPLE_DESC NO_AA = { .Count = 1, .Quality = 0 };
 
 
-
-
 	// device init
+	HWND hwnd;
 	IDXGIFactory4* factory;
 	ID3D12Device5* d3dDevice;
 	ID3D12CommandQueue* cmdQueue;
 	ID3D12Fence* fence;
 	UINT64 fenceState = 1;
-
 
 	// swap chain and uav
 	IDXGISwapChain3* swapChain;
@@ -155,5 +153,11 @@ public:
 
 	ID3D12CommandAllocator* cmdAlloc; // block of memory
 	ID3D12GraphicsCommandList4* cmdList;
+
+	// imgui
+	ID3D12DescriptorHeap* imguiSrvHeap;
+	ID3D12DescriptorHeap* rtvHeap = nullptr;
+
+	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 };
 

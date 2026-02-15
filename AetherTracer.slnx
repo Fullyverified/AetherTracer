@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="AetherTracer/AetherTracer.vcxproj" Id="ec4d97e9-e8ca-4c64-ae9f-e2c93d60f93c" />
+  <Project Path="AetherTracer/AetherTracer.vcxproj" Id="70905480-f629-418f-9804-531fca9dec85" />
 </Solution>

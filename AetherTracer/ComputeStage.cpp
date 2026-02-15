@@ -1,5 +1,6 @@
 #include "ComputeStage.h"
-#include <d3dcompiler.h> // for compiling shaders
+
+#include <d3dcompiler.h>
 #include <random>
 
 

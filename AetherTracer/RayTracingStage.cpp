@@ -886,6 +886,11 @@ void RayTracingStage::traceRays() {
 
 	rm->cmdList->SetComputeRootConstantBufferView(7, rm->cameraConstantBuffer->defaultBuffers->GetGPUVirtualAddress()); // b0 camera cbv
 
+	// clear accumulation texture
+
+	rm->cmdList->ClearUnorderedAccessViewFloat(gpuHandle, raytracingDescHeap->GetCPUDescriptorHandleForHeapStart(), rm->accumulationTexture, rm->clearColor, 0, nullptr);
+
+
 	// Dispatch rays
 
 	auto rtDesc = rm->renderTarget->GetDesc();
