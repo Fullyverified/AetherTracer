@@ -1,5 +1,6 @@
 #include "RayTracingStage.h"
 #include <d3dcompiler.h> // for compiling shaders
+#include "Config.h"
 
 bool debugstage = true;
 
@@ -10,6 +11,7 @@ RayTracingStage::RayTracingStage(ResourceManager* resourceManager, MeshManager* 
 
 void RayTracingStage::initStage() {
 
+	initCPUDescriptor();
 	initRTDescriptors();
 	initRTRootSignature();
 	initRTPipeline();
@@ -248,7 +250,7 @@ void RayTracingStage::updateCamera() {
 	EntityManager::Camera* entityCamera = entityManager->camera;
 
 	rm->dx12Camera->position = { entityCamera->position.x, entityCamera->position.y, entityCamera->position.z };
-	rm->dx12Camera->frame = rm->num_frames;
+	rm->dx12Camera->seed = rm->seed;
 
 	PT::Vector3 position = entityCamera->position;
 	PT::Vector3 right = entityCamera->right;
@@ -560,6 +562,28 @@ void RayTracingStage::initVertexIndexBuffers() {
 
 }
 
+void RayTracingStage::initCPUDescriptor() {
+
+	// for the ClearUnorderedAccessViewFloat method
+	D3D12_DESCRIPTOR_HEAP_DESC cpuDesc = {
+	.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+	.NumDescriptors = 1,
+	.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE, // not shader visible
+	};
+
+	HRESULT hr = rm->d3dDevice->CreateDescriptorHeap(&cpuDesc, IID_PPV_ARGS(&cpuDescHeap));
+	checkHR(hr, nullptr, "Create CPU Descriptor Heap");
+
+	// for the non shader visible descriptor heap
+	D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+			.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+			.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D
+	};
+
+	rm->d3dDevice->CreateUnorderedAccessView(rm->accumulationTexture, nullptr, &uavDesc, cpuDescHeap->GetCPUDescriptorHandleForHeapStart());
+	//cpuHandle.ptr += descriptorIncrementSize; // unnessacary
+}
+
 void RayTracingStage::initRTDescriptors() {
 
 	// Heap size: 1 UAV (accumulation texture) + 1 UAV Rand Buffer + 1 SRV (scene), + NUM_INSTANCES * (vertex srvs, index srvs) + 1 Material SRV + MaterialIndex SRV + Camera CBV
@@ -579,7 +603,7 @@ void RayTracingStage::initRTDescriptors() {
 	};
 
 	HRESULT hr = rm->d3dDevice->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&raytracingDescHeap));
-	checkHR(hr, nullptr, "CreateDescriptorHeap");
+	checkHR(hr, nullptr, "Create Ray Tracing Descriptor Heap");
 
 	// Create views
 	D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = raytracingDescHeap->GetCPUDescriptorHandleForHeapStart();
@@ -592,6 +616,7 @@ void RayTracingStage::initRTDescriptors() {
 	rm->d3dDevice->CreateUnorderedAccessView(rm->accumulationTexture, nullptr, &uavDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
+	
 	// slot 1 UAV for RNG Buffer
 	uavDesc = {};
 	uavDesc.Format = DXGI_FORMAT_UNKNOWN,
@@ -824,7 +849,6 @@ void RayTracingStage::initRTPipeline() {
 
 }
 
-
 void RayTracingStage::initRTShaderTables() {
 
 	if (debugstage) std::cout << "iniRTShaderTables()" << std::endl;
@@ -869,6 +893,14 @@ void RayTracingStage::traceRays() {
 	ID3D12DescriptorHeap* heaps[] = { raytracingDescHeap };
 	rm->cmdList->SetDescriptorHeaps(1, heaps);
 
+	if (!config.accumulate) {
+		// slot 0 UAV for accumulation texture
+		D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = cpuDescHeap->GetCPUDescriptorHandleForHeapStart();
+		D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = raytracingDescHeap->GetGPUDescriptorHandleForHeapStart();
+		rm->cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // u0 accum UAV
+		rm->cmdList->ClearUnorderedAccessViewFloat(gpuHandle, cpuHandle, rm->accumulationTexture, rm->clearColor, 0, nullptr);
+	}
+
 	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = raytracingDescHeap->GetGPUDescriptorHandleForHeapStart();
 	rm->cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // u0 accum UAV
 	gpuHandle.ptr += descriptorIncrementSize;
@@ -887,9 +919,6 @@ void RayTracingStage::traceRays() {
 	rm->cmdList->SetComputeRootConstantBufferView(7, rm->cameraConstantBuffer->defaultBuffers->GetGPUVirtualAddress()); // b0 camera cbv
 
 	// clear accumulation texture
-
-	rm->cmdList->ClearUnorderedAccessViewFloat(gpuHandle, raytracingDescHeap->GetCPUDescriptorHandleForHeapStart(), rm->accumulationTexture, rm->clearColor, 0, nullptr);
-
 
 	// Dispatch rays
 

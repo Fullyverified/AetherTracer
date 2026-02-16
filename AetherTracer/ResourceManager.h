@@ -20,16 +20,22 @@ public:
 	ResourceManager() {};
 	~ResourceManager() {};
 
+	void initClearRootSignature();
+	void initClearPipeline();
+	void initClearDescriptors();
 
-// Utility
+
+
+
+	// Utility
 
 	struct Buffer {
 		ID3D12Resource* uploadBuffers;
 		ID3D12Resource* defaultBuffers;
 	};
 
-	
-// RAY TRACING STAGE
+
+	// RAY TRACING STAGE
 
 	struct DX12Material {
 		DirectX::XMFLOAT3 color;
@@ -78,7 +84,7 @@ public:
 		float pad0;
 
 		DirectX::XMFLOAT4X4 invViewProj;
-		UINT frame;
+		UINT seed;
 	};
 
 	// MODEL
@@ -109,7 +115,7 @@ public:
 	std::unordered_map<std::string, uint32_t> uniqueInstancesID;
 	std::unordered_set<std::string> uniqueInstances;
 
-// COMPUTE STAGE
+	// COMPUTE STAGE
 
 	ID3D12Resource* renderTarget;
 
@@ -122,7 +128,7 @@ public:
 	ToneMappingParams* toneMappingParams;
 	Buffer* toneMappingConstantBuffer;
 
-// SHARED
+	// SHARED
 
 	ID3D12Resource* accumulationTexture;
 
@@ -130,7 +136,8 @@ public:
 	std::vector<UINT> randPattern;
 
 
-	UINT num_frames = 30;
+	UINT num_frames = 1;
+	UINT seed = 1;
 
 	UINT width;
 	UINT height;
@@ -159,5 +166,10 @@ public:
 	ID3D12DescriptorHeap* rtvHeap = nullptr;
 
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-};
 
+
+	// cpu non shader visible descriptor heap
+	ID3D12DescriptorHeap* cpuDescHeap;
+
+
+};

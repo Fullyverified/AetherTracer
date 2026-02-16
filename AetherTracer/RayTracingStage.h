@@ -33,6 +33,10 @@ public:
 	void initRTPipeline();
 	void initRTShaderTables();
 
+	void initCPUDescriptor();
+
+	void initClearDescriptorHeap();
+
 	void traceRays();
 
 	void checkHR(HRESULT hr, ID3DBlob* errorblob, std::string context);
@@ -49,6 +53,8 @@ public:
 	ID3D12RootSignature* raytracingRootSignature;
 	ID3D12StateObject* raytracingPSO;
 	ID3D12DescriptorHeap* raytracingDescHeap;
+	ID3D12DescriptorHeap* cpuDescHeap;
+
 
 	UINT descriptorIncrementSize;
 

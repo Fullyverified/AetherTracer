@@ -44,7 +44,7 @@ cbuffer Camerab : register(b0)
     float3 camPos;
     float pad0;
     row_major float4x4 InvVieProj;
-    uint frame;
+    uint seed;
 }
 
 
@@ -85,7 +85,7 @@ void RayGeneration()
     payload.numBounces = 0;
     float3 finalColor = float3(0.0f, 0.0f, 0.0f);
     
-    for (uint numBounces = 0; numBounces <= 8; numBounces++)
+    for (uint numBounces = 0; numBounces <= 1; numBounces++)
     {
         TraceRay(scene, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
 
@@ -167,8 +167,7 @@ float3 localToWorld(float3 local, float3x3 onb)
 
 float3 DirectionSampler(inout Payload payload, Material mat, float3 worldNormal, float2 uv)
 {
-    //uint state = randPattern[payload.pixelIndex.x + payload.pixelIndex.y * payload.dims.x];
-    uint state = (payload.pixelIndex.x + payload.pixelIndex.y * payload.dims.x) * frame * 0x27d4eb2d;
+    uint state = (payload.pixelIndex.x + payload.pixelIndex.y * payload.dims.x) * seed * 0x27d4eb2d;
     
     float rand1 = random(payload.pixelIndex, payload.dims);
     float rand2 = random(payload.pixelIndex, payload.dims);

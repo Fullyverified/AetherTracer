@@ -1,6 +1,7 @@
 ﻿#include "DX12Renderer.h"
 #include <iostream>
 #include <random>
+#include "Config.h"
 
 bool debug = true;
 
@@ -139,10 +140,10 @@ void DX12Renderer::initDevice() {
 		debug->Release();
 	}
 
-	if (ID3D12Debug1* debug1; SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug1)))) {
+	/*if (ID3D12Debug1* debug1; SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug1)))) {
 		debug1->SetEnableGPUBasedValidation(true);
 		debug1->Release();
-	}
+	}*/
 
 	// feature level dx12_2
 	IDXGIAdapter* adapter = nullptr;
@@ -302,14 +303,14 @@ void DX12Renderer::accumulationReset() {
 void DX12Renderer::render() {
 	std::cout << "numRays: " << rm->num_frames << std::endl;
 
-	rm->num_frames = 1;
 	raytracingStage->updateCamera();
 	computeStage->updateToneParams();
 	raytracingStage->traceRays();
 	computeStage->postProcess();
 	//imguiRender();
 
-
+	rm->num_frames = config.accumulate ? rm->num_frames + 1 : 1;
+	rm->seed++;
 }
 
 void DX12Renderer::imguiRender() {

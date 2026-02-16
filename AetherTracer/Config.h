@@ -12,6 +12,7 @@ struct Config {
     // Multiple Importance Sampling
     int raysPerPixel = 1;
     int numBounces = 0;
+    bool accumulate = false;
 
     // ReSTIR
 

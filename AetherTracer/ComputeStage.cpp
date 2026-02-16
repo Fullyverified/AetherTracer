@@ -2,6 +2,7 @@
 
 #include <d3dcompiler.h>
 #include <random>
+#include <random>
 
 
 ComputeStage::ComputeStage(ResourceManager* resourceManager, MeshManager* meshManager, MaterialManager* materialManager, EntityManager* entityManager)
@@ -12,6 +13,9 @@ void ComputeStage::initStage() {
 	initComputeRootSignature();
 	initComputePipeline();
 	initComputeDescriptors();
+
+	std::cout << "test" << std::endl;
+
 }
 
 void ComputeStage::updateRand() {
@@ -42,8 +46,8 @@ void ComputeStage::updateRand() {
 			word = (word >> rot) | (word << (32u - rot));
 
 			//rm->randPattern[x + y * rm->width] = word;
-			//rm->randPattern[x + y * rm->width] = dist(gen);
-			rm->randPattern[x + y * rm->width] = x + y * rm->width;
+			rm->randPattern[x + y * rm->width] = dist(gen);
+			//rm->randPattern[x + y * rm->width] = x + y * rm->width;
 		}
 	}
 
