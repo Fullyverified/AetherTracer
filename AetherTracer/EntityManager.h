@@ -2,9 +2,11 @@
 
 #include <vector>
 #include <string>
+#include <algorithm>
+
 #include "Vector.h"
 #include "MaterialManager.h"
-#include <algorithm>
+#include "Config.h"
 
 class EntityManager {
 public:
@@ -35,6 +37,8 @@ public:
 		float aperture = 0.0f; // DOF
 		float focusDistance = 10.0f;
 
+		bool camMoved = false;
+
 
 		PT::Vector3 forward;
 		PT::Vector3 up;
@@ -51,14 +55,49 @@ public:
 			up = PT::Cross(right, forward);
 			up = PT::Normalize(up);
 
-		};
+		}
+
+		void updateDirection(float mouseX, float mouseY) {
+
+			rotation.x = rotation.x + mouseX * config.sensitivity * 0.1;
+			rotation.y = rotation.y - mouseY * config.sensitivity * 0.1;
+
+			update();
+			camMoved = true;
+		}
+
+		void moveForward(float deltaTime) {
+			position = position + forward * (deltaTime * config.sensitivity);
+			camMoved = true;
+		}
+		void moveBack(float deltaTime) {
+			position = position - forward * (deltaTime * config.sensitivity);
+			camMoved = true;
+		}
+		void moveLeft(float deltaTime) {
+			position = position + right * (deltaTime * config.sensitivity);
+			camMoved = true;
+		}
+		void moveRight(float deltaTime) {
+			position = position - right * (deltaTime * config.sensitivity);
+			camMoved = true;
+		}
+		void moveUp(float deltaTime) {
+			position = position + up * (deltaTime * config.sensitivity);
+			camMoved = true;
+		}
+		void moveDown(float deltaTime) {
+			position = position - up * (deltaTime * config.sensitivity);
+			camMoved = true;
+		}
+
 	};
 
 
 	EntityManager(MaterialManager* materialManager) : materialManager(materialManager) {
-	
+
 		camera = new Camera({ 0, 0, 0 }, { 0, 0 });
-	
+
 	};
 
 	~EntityManager() {

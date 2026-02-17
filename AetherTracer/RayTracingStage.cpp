@@ -508,6 +508,8 @@ void RayTracingStage::initTopLevelAS() {
 	HRESULT hr = rm->d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&rm->tlasscratch));
 	checkHR(hr, nullptr, "CreateCommittedResource for AS failed");
 
+	desc.Width = prebuildInfo.ResultDataMaxSizeInBytes;
+
 	hr = rm->d3dDevice->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, nullptr, IID_PPV_ARGS(&rm->tlas));
 	checkHR(hr, nullptr, "CreateCommittedResource for AS failed");
 		
@@ -559,7 +561,6 @@ void RayTracingStage::initVertexIndexBuffers() {
 
 	}
 
-
 }
 
 void RayTracingStage::initCPUDescriptor() {
@@ -581,7 +582,7 @@ void RayTracingStage::initCPUDescriptor() {
 	};
 
 	rm->d3dDevice->CreateUnorderedAccessView(rm->accumulationTexture, nullptr, &uavDesc, cpuDescHeap->GetCPUDescriptorHandleForHeapStart());
-	//cpuHandle.ptr += descriptorIncrementSize; // unnessacary
+	//cpuHandle.ptr += descriptorIncrementSize; // unnessacary, only one
 }
 
 void RayTracingStage::initRTDescriptors() {
@@ -893,7 +894,7 @@ void RayTracingStage::traceRays() {
 	ID3D12DescriptorHeap* heaps[] = { raytracingDescHeap };
 	rm->cmdList->SetDescriptorHeaps(1, heaps);
 
-	if (!config.accumulate) {
+	if (!config.accumulate || entityManager->camera->camMoved) {
 		// slot 0 UAV for accumulation texture
 		D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = cpuDescHeap->GetCPUDescriptorHandleForHeapStart();
 		D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = raytracingDescHeap->GetGPUDescriptorHandleForHeapStart();

@@ -15,15 +15,66 @@ namespace PT	{
 		float x, y, z;
 		Vector3() : x(0), y(0), z(0) {};
 		Vector3(float x, float y, float z) : x(x), y(y), z(z) {};
+
+		
+			Vector3 operator+(float scalar) const {
+				return { x + scalar, y + scalar, z + scalar };
+			}
+
+			Vector3 operator-(float scalar) const {
+				return { x - scalar, y - scalar, z - scalar };
+			}
+
+			Vector3 operator*(float scalar) const {
+				return { x * scalar, y * scalar, z * scalar };
+			}
+
+			Vector3 operator/(float scalar) const {
+				return { x / scalar, y / scalar, z / scalar };
+			}
+
+			Vector3 operator+(const Vector3 & other) const {
+				return { x + other.x, y + other.y, z + other.z };
+			}
+
+			Vector3 operator-(const Vector3 & other) const {
+				return { x - other.x, y - other.y, z - other.z };
+			}
+
+			Vector3 operator*(const Vector3 & other) const {
+				return { x * other.x, y * other.y, z * other.z };
+			}
+
+			Vector3 operator/(const Vector3 & other) const {
+				return { x / other.x, y / other.y, z / other.z };
+			}
+		
+		
 	};
 
 	struct Vector2 {
 		float x, y;
 		Vector2() : x(0), y(0) {};
 		Vector2(float x, float y) : x(x), y(y) {};
+
+		Vector2 operator+(float scalar) {
+			return { x + scalar, y + scalar };
+		}
+
+		Vector2 operator-(float scalar) {
+			return { x - scalar, y - scalar };
+		}
+
+		Vector2 operator*(float scalar) {
+			return { x * scalar, y * scalar };
+		}
+
+		Vector2 operator/(float scalar) {
+			return { x / scalar, y / scalar };
+		}
 	};
 
-	static void Print(Vector3& vec) {
+	static void Print(const Vector3& vec) {
 		std::cout << "X: " << vec.x << ", Y: " << vec.y << ", Z: " << vec.z << std::endl;
 	}
 
@@ -71,5 +122,6 @@ namespace PT	{
 	
 		return (deg * static_cast<float>(std::numbers::pi)) / 180.0f;
 	}
+
 }
 

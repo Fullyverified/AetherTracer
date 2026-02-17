@@ -4,6 +4,21 @@
 #include "Config.h"
 
 bool debug = true;
+ImGuiDescriptorAllocator* ImGuiDescAlloc;
+
+// for imgui
+void ImGuiDX12AllocateSRV(ImGui_ImplDX12_InitInfo* init_info_unused, D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu) {
+
+	(void)init_info_unused;  // Not used in most cases
+
+	return ImGuiDescAlloc->alloc(out_cpu, out_gpu);
+}
+
+// for imgui
+void ImGuiDX12FreeSRV(ImGui_ImplDX12_InitInfo* init_info_unused, D3D12_CPU_DESCRIPTOR_HANDLE cpu, D3D12_GPU_DESCRIPTOR_HANDLE gpu) {
+	(void)init_info_unused;
+	ImGuiDescAlloc->free(cpu, gpu);
+}
 
 DX12Renderer::DX12Renderer(EntityManager* entityManager, MeshManager* meshManager, MaterialManager* materialManager, Window* window) : entityManager(entityManager), meshManager(meshManager), materialManager(materialManager), window(window) {
 
@@ -19,7 +34,7 @@ void DX12Renderer::init() {
 	initSurfaces();
 	initCommand();
 
-	//initImgui();
+	initImgui();
 
 	computeStage = new ComputeStage(rm, meshManager, materialManager, entityManager);
 	raytracingStage = new RayTracingStage(rm, meshManager, materialManager, entityManager);
@@ -68,62 +83,6 @@ void DX12Renderer::init() {
 	rm->cmdAlloc->Reset();
 	rm->cmdList->Reset(rm->cmdAlloc, nullptr);
 
-}
-
-void DX12Renderer::initImgui() {
-
-	// thanks grok
-
-	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-	rtvHeapDesc.NumDescriptors = 2;  // Matches your swap chain buffer count
-	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-	rm->d3dDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rm->rtvHeap));
-
-	// Create RTVs for each backbuffer
-	for (UINT i = 0; i < 2; ++i) {
-		ID3D12Resource* backBuffer = nullptr;
-		rm->swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
-		D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rm->rtvHeap->GetCPUDescriptorHandleForHeapStart();
-		UINT rtvInc = rm->d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-		rtvHandle.ptr += i * rtvInc;
-		rm->d3dDevice->CreateRenderTargetView(backBuffer, nullptr, rtvHandle);
-		backBuffer->Release();
-	}
-
-	// Create SRV heap for ImGui (font texture)
-	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 1;  // Minimal for ImGui
-	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-	rm->d3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&rm->imguiSrvHeap));
-
-	// Initialize ImGui
-	ImGui::CreateContext();
-	ImGuiIO& io = ImGui::GetIO();
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Optional: Enable keyboard nav
-	ImGui_ImplSDL3_InitForD3D(window->getSDLHandle());
-	D3D12_CPU_DESCRIPTOR_HANDLE fontCpuHandle = rm->imguiSrvHeap->GetCPUDescriptorHandleForHeapStart();
-	D3D12_GPU_DESCRIPTOR_HANDLE fontGpuHandle = rm->imguiSrvHeap->GetGPUDescriptorHandleForHeapStart();
-	ImGui_ImplDX12_Init(rm->d3dDevice, 2, DXGI_FORMAT_R8G8B8A8_UNORM, rm->imguiSrvHeap, fontCpuHandle, fontGpuHandle);
-	ImGui::StyleColorsDark();  // Or your preferred style
-
-}
-
-void DX12Renderer::resizeImgui() {
-	// thanks grok
-	for (UINT i = 0; i < 2; ++i) {
-		ID3D12Resource* backBuffer = nullptr;
-		rm->swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
-		D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rm->rtvHeap->GetCPUDescriptorHandleForHeapStart();
-		UINT rtvInc = rm->d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-		rtvHandle.ptr += i * rtvInc;
-		rm->d3dDevice->CreateRenderTargetView(backBuffer, nullptr, rtvHandle);
-		backBuffer->Release();
-	}
-
-	// Update ImGui display size
-	ImGui_ImplDX12_InvalidateDeviceObjects();  // Handle device changes
 }
 
 // device
@@ -219,6 +178,15 @@ void DX12Renderer::resize() {
 	if (rm->renderTarget) {
 		rm->randPattern.resize(rm->width * rm->height);
 	}
+
+	
+	createBackBufferRTVs();
+
+	if (rm->renderTarget) {
+		rm->randPattern.resize(rm->width * rm->height);
+	}
+
+	std::cout << "resize" << std::endl;
 }
 
 // command list and allocator
@@ -301,43 +269,40 @@ void DX12Renderer::accumulationReset() {
 // command submission
 
 void DX12Renderer::render() {
-	std::cout << "numRays: " << rm->num_frames << std::endl;
 
 	raytracingStage->updateCamera();
 	computeStage->updateToneParams();
 	raytracingStage->traceRays();
 	computeStage->postProcess();
-	//imguiRender();
 
-	rm->num_frames = config.accumulate ? rm->num_frames + 1 : 1;
+	rm->num_frames = (config.accumulate & !entityManager->camera->camMoved) ? rm->num_frames + 1 : 1;
 	rm->seed++;
+
+	ImGui::Render();
 }
 
-void DX12Renderer::imguiRender() {
+void DX12Renderer::imguiPresent(ID3D12Resource* backBuffer) {
+	// set descriptor heap for imgui
+	ID3D12DescriptorHeap* heaps[] = { ImGuiDescAlloc->heap };
+	rm->cmdList->SetDescriptorHeaps(ARRAYSIZE(heaps), heaps);
 
-	
+	// Get current backbuffer RTV
+	UINT bbIndex = rm->swapChain->GetCurrentBackBufferIndex();
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rm->rtvHeap->GetCPUDescriptorHandleForHeapStart();
+	rtvHandle.ptr += bbIndex * rm->rtvDescriptorSize;
+
+	rm->cmdList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+
+	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), rm->cmdList);
 }
 
 void DX12Renderer::present() {
+
 
 	// copy image onto swap chain's current buffer
 	ID3D12Resource* backBuffer;
 	rm->swapChain->GetBuffer(rm->swapChain->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&backBuffer));
 	backBuffer->SetName(L"Back Buffer");
-
-	auto barrier = [this](auto* resource, auto before, auto after) {
-
-		D3D12_RESOURCE_BARRIER rb = {
-		.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
-		.Transition = {.pResource = resource,
-						.StateBefore = before,
-						.StateAfter = after},
-		};
-
-		rm->cmdList->ResourceBarrier(1, &rb);
-
-		};
-
 
 	// transition render target and back buffer to copy src/dst states
 	barrier(rm->renderTarget, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -345,25 +310,15 @@ void DX12Renderer::present() {
 
 	rm->cmdList->CopyResource(backBuffer, rm->renderTarget);
 
+	barrier(backBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-	// transition backbuffer for imgui rendering
-	//barrier(backBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
+	imguiPresent(backBuffer);
 
-	//// set descriptor heap for imgui
-	//ID3D12DescriptorHeap* heaps[] = { rm->imguiSrvHeap };
-	//rm->cmdList->SetDescriptorHeaps(_countof(heaps), heaps);
-
-	//// set RTV for backbuffer
-	//UINT rtvInc = rm->d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-	//D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rm->rtvHeap->GetCPUDescriptorHandleForHeapStart();
-	//rtvHandle.ptr += rm->swapChain->GetCurrentBackBufferIndex() * rtvInc;
-	//rm->cmdList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
-
-	//ImGui::Render();
-	//ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), rm->cmdList);
+	barrier(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 
 	// transition for present
-	barrier(backBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+
+	// transition for next frame
 	barrier(rm->renderTarget, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
 	// release refernce to backbuffer
@@ -395,4 +350,80 @@ void DX12Renderer::checkHR(HRESULT hr, ID3DBlob* errorblob, std::string context)
 		OutputDebugStringA((char*)errorblob->GetBufferPointer());
 		errorblob->Release();
 	}
+}
+
+void DX12Renderer::barrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
+
+	D3D12_RESOURCE_BARRIER rb = {
+		.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+		.Transition = {.pResource = resource,
+						.StateBefore = before,
+						.StateAfter = after},
+	};
+
+	rm->cmdList->ResourceBarrier(1, &rb);
+
+}
+
+void DX12Renderer::initImgui() {
+
+	// thanks grok
+
+	ImGuiDescAlloc = new ImGuiDescriptorAllocator{};
+	ImGuiDescAlloc->init(rm->d3dDevice, 64);
+
+	// for swap chain
+	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+	rtvHeapDesc.NumDescriptors = rm->frameIndexInFlight;
+	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	rm->d3dDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rm->rtvHeap));
+	rm->rtvHeap->SetName(L"ImGui RTV Heap");
+	rm->rtvDescriptorSize = rm->d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+	// ImGui init
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	ImGui_ImplSDL3_InitForD3D(window->getSDLHandle());
+
+	ImGui_ImplDX12_InitInfo init_info = {};
+	init_info.Device = rm->d3dDevice;
+	init_info.CommandQueue = rm->cmdQueue;
+	init_info.NumFramesInFlight = rm->frameIndexInFlight;
+	init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+	init_info.DSVFormat = DXGI_FORMAT_UNKNOWN;
+	init_info.SrvDescriptorHeap = ImGuiDescAlloc->heap;
+	init_info.SrvDescriptorAllocFn = ImGuiDX12AllocateSRV;
+	init_info.SrvDescriptorFreeFn = ImGuiDX12FreeSRV;
+
+	ImGui_ImplDX12_Init(&init_info);
+	ImGui::StyleColorsDark();
+	io.Fonts->AddFontDefault();
+	io.Fonts->Build();
+
+	createBackBufferRTVs();
+}
+
+// for imgui
+void DX12Renderer::createBackBufferRTVs() {
+
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvStart = rm->rtvHeap->GetCPUDescriptorHandleForHeapStart();
+
+	for (UINT i = 0; i < rm->frameIndexInFlight; i++) {
+		ID3D12Resource* backBuffer = nullptr;
+		HRESULT hr = rm->swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
+		checkHR(hr, nullptr, "ImGui Backbuffer SRV");
+
+		D3D12_CPU_DESCRIPTOR_HANDLE handle = rtvStart;
+		handle.ptr += i * rm->rtvDescriptorSize;
+
+		rm->d3dDevice->CreateRenderTargetView(backBuffer, nullptr, handle);
+
+		backBuffer->Release();
+	}
+
+	ImGui_ImplDX12_InvalidateDeviceObjects();
+	ImGui_ImplDX12_CreateDeviceObjects();
+
 }

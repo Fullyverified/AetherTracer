@@ -58,25 +58,17 @@ bool Window::shouldClose() const {
     return m_shouldClose;
 }
 
-void Window::pollEvents() {
+void Window::pollEvents(SDL_Event& event) {
     m_resizedFlag = false;
-    SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-
-        //ImGui_ImplSDL3_ProcessEvent(&event);
-        if (event.type == SDL_EVENT_QUIT) {
-            // set shouldClose for imgui
-        }
-
-        if (event.type == SDL_EVENT_QUIT) {
-            m_shouldClose = true;
-        }
-        else if (event.type == SDL_EVENT_WINDOW_RESIZED ||
-            event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
-            m_resizedFlag = true;
-        }
-        // Handle other events as needed (e.g., keyboard, mouse)
+   
+    if (event.type == SDL_EVENT_QUIT) {
+        m_shouldClose = true;
     }
+    else if (event.type == SDL_EVENT_WINDOW_RESIZED ||
+        event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+        m_resizedFlag = true;
+    }
+
 }
 
 bool Window::wasResized() {

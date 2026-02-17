@@ -12,10 +12,9 @@ struct Config {
     // Multiple Importance Sampling
     int raysPerPixel = 1;
     int numBounces = 0;
-    bool accumulate = false;
+    bool accumulate = true;
 
-    // ReSTIR
-
+    // other
     float fOV = 45;
     bool DepthOfField = false;
     float apertureRadius = 0.05f;
@@ -24,7 +23,9 @@ struct Config {
     float exposure = 1;
     float mouseSensitivity = 0.1f;
     bool sky = false;
+    bool imgui = false;
 
+    float sensitivity = 1.0f;
 };
 
 extern Config config;

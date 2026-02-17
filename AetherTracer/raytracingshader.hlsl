@@ -85,7 +85,7 @@ void RayGeneration()
     payload.numBounces = 0;
     float3 finalColor = float3(0.0f, 0.0f, 0.0f);
     
-    for (uint numBounces = 0; numBounces <= 1; numBounces++)
+    for (uint numBounces = 0; numBounces <= 8; numBounces++)
     {
         TraceRay(scene, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
 
@@ -185,7 +185,7 @@ float3 DirectionSampler(inout Payload payload, Material mat, float3 worldNormal,
 
 float3 throughputUpdate(inout Payload payload, Material mat, float3 worldNormal, float2 uv)
 {
-    //uint state = randPattern[payload.pixelIndex.x + payload.pixelIndex.y * payload.dims.x];
+    uint state = (payload.pixelIndex.x + payload.pixelIndex.y * payload.dims.x) * seed * 0x27d4eb2d;
 
     
     float3 wi = WorldRayDirection() * -1;
@@ -197,7 +197,7 @@ float3 throughputUpdate(inout Payload payload, Material mat, float3 worldNormal,
     float NoL = saturate(dot(worldNormal, wo)); //cos_theta_o
     
         
-    //randPattern[payload.pixelIndex.x + payload.dims.x * payload.pixelIndex.y] = state; // update state
+    randPattern[payload.pixelIndex.x + payload.dims.x * payload.pixelIndex.y] = state; // update state
     return mat.color;
 }
 
@@ -237,7 +237,6 @@ void Shade(inout Payload payload, float2 uv)
     
     payload.dir = DirectionSampler(payload, mat, worldNormal, uv);
     payload.throughput *= throughputUpdate(payload, mat, worldNormal, uv);
-    //payload.throughput = mat.color;
     
     return;
 }
@@ -260,8 +259,9 @@ void Miss(inout Payload payload)
 {
     float slope = normalize(WorldRayDirection()).y;
     float t = saturate(slope * 5 + 0.5);
-    payload.throughput *= lerp(skyBottom, skyTop, t);
-
+    //payload.throughput *= lerp(skyBottom, skyTop, t);
+    payload.throughput *= float3(0.0f, 0.0f, 0.0f);
+    
     payload.missed = true;
     return;
 }

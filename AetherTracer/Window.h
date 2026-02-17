@@ -1,5 +1,7 @@
 #pragma once
 
+#include "InputManager.h"
+
 #include <SDL3/SDL.h>
 #include <cstdint>
 #include <string>
@@ -22,7 +24,7 @@ public:
     uint32_t getPixelHeight() const;
 
     bool shouldClose() const;
-    void pollEvents();
+    void pollEvents(SDL_Event &event);
 
     bool wasResized();            // call after pollEvents
     void acknowledgeResize();
@@ -34,6 +36,10 @@ public:
 
     // For Vulkan when using SDL's helper (most people do this)
     SDL_Window* getSDLHandle() const { return m_window; }
+
+    void setRelativeMouse(bool& state) {
+        SDL_SetWindowRelativeMouseMode(m_window, state);
+    }
 
 private:
     SDL_Window* m_window = nullptr;

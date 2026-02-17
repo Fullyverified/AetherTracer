@@ -139,6 +139,9 @@ public:
 	UINT num_frames = 1;
 	UINT seed = 1;
 
+	UINT frameIndexInFlight = 2;
+
+
 	UINT width;
 	UINT height;
 
@@ -162,8 +165,9 @@ public:
 	ID3D12GraphicsCommandList4* cmdList;
 
 	// imgui
-	ID3D12DescriptorHeap* imguiSrvHeap;
 	ID3D12DescriptorHeap* rtvHeap = nullptr;
+	UINT rtvDescriptorSize = 0;
+
 
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 

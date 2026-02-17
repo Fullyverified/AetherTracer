@@ -13,9 +13,6 @@ void ComputeStage::initStage() {
 	initComputeRootSignature();
 	initComputePipeline();
 	initComputeDescriptors();
-
-	std::cout << "test" << std::endl;
-
 }
 
 void ComputeStage::updateRand() {
@@ -34,7 +31,7 @@ void ComputeStage::updateRand() {
 		
 		for (UINT y = 0; y < rm->height; y++) {
 
-			UINT state = ((y << 16u) | x) ^ (rm->num_frames * 1664525u * static_cast<UINT>(GetTickCount64())) ^ 0xdeadbeefu;
+			UINT state = ((y << 16u) | x) ^ (rm->seed * 1664525u * static_cast<UINT>(GetTickCount64())) ^ 0xdeadbeefu;
 
 			// PCG hash function
 
@@ -45,8 +42,8 @@ void ComputeStage::updateRand() {
 
 			word = (word >> rot) | (word << (32u - rot));
 
-			//rm->randPattern[x + y * rm->width] = word;
-			rm->randPattern[x + y * rm->width] = dist(gen);
+			rm->randPattern[x + y * rm->width] = word;
+			//rm->randPattern[x + y * rm->width] = dist(gen);
 			//rm->randPattern[x + y * rm->width] = x + y * rm->width;
 		}
 	}
