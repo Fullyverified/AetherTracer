@@ -101,7 +101,7 @@ void RayGeneration()
 
     }
     
-    accumulationTexture[pixelIndex] += float4(payload.throughput, 1.0f);
+    accumulationTexture[pixelIndex] += float4(finalColor, 1.0f);
 }
 
 float random(uint2 pixelIndex, uint2 dims)
