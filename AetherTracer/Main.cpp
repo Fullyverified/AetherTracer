@@ -4,9 +4,10 @@
 
 int main() {
 
-	auto aetherTracer = AetherTracer{};
+	auto aetherTracer = new AetherTracer{};
 
-	aetherTracer.run();
+	aetherTracer->run();
 
+	delete aetherTracer;
 	return 0;
 }

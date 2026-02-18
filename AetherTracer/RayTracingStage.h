@@ -53,7 +53,8 @@ public:
 	ID3D12RootSignature* raytracingRootSignature;
 	ID3D12StateObject* raytracingPSO;
 	ID3D12DescriptorHeap* raytracingDescHeap;
-	ID3D12DescriptorHeap* cpuDescHeap;
+
+	ID3D12DescriptorHeap* cpuDescHeap; // to clear UAVs
 
 
 	UINT descriptorIncrementSize;

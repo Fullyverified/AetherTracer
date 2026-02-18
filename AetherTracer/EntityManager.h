@@ -5,8 +5,9 @@
 #include <algorithm>
 
 #include "Vector.h"
-#include "MaterialManager.h"
 #include "Config.h"
+
+#include "MaterialManager.h"
 
 class EntityManager {
 public:
@@ -59,8 +60,8 @@ public:
 
 		void updateDirection(float mouseX, float mouseY) {
 
-			rotation.x = rotation.x + mouseX * config.sensitivity * 0.1;
-			rotation.y = rotation.y - mouseY * config.sensitivity * 0.1;
+			rotation.x = rotation.x + mouseX * config.mouseSensitivity;
+			rotation.y = rotation.y - mouseY * config.mouseSensitivity;
 
 			update();
 			camMoved = true;

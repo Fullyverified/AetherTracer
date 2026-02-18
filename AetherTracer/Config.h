@@ -21,11 +21,11 @@ struct Config {
     float focalDistance = 15.0f;
  
     float exposure = 1;
-    float mouseSensitivity = 0.1f;
     bool sky = false;
     bool imgui = false;
 
-    float sensitivity = 1.0f;
+    float mouseSensitivity = 0.1f;
+    float sensitivity = 5.0f;
 };
 
 extern Config config;

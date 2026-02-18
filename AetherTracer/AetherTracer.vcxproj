@@ -130,6 +130,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AetherTracer.cpp" />
     <ClCompile Include="ComputeStage.cpp" />
     <ClCompile Include="Config.cpp" />
     <ClCompile Include="DX12Renderer.cpp" />

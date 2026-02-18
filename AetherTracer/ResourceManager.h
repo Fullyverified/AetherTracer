@@ -13,27 +13,30 @@
 #include "MeshManager.h"
 
 
+
 class ResourceManager {
-
-
 public:
-	ResourceManager() {};
-	~ResourceManager() {};
-
-	void initClearRootSignature();
-	void initClearPipeline();
-	void initClearDescriptors();
-
-
-
-
-	// Utility
 
 	struct Buffer {
 		ID3D12Resource* uploadBuffers;
 		ID3D12Resource* defaultBuffers;
 	};
 
+
+	ResourceManager() {};
+	~ResourceManager() {};
+
+	void initClearDescriptors();
+
+
+	Buffer* createBuffers(const void* data, size_t byteSize, D3D12_RESOURCE_STATES finalState, bool UAV);
+
+
+
+
+	// Utility
+
+	
 
 	// RAY TRACING STAGE
 

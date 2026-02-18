@@ -1,6 +1,7 @@
 #include "EntityManager.h"
 #include <string>
 
+
 void EntityManager::initScene() {
 
     camera->position = { -2, 0, 0 };
