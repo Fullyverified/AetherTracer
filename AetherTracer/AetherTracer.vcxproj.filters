@@ -99,6 +99,5 @@
   <ItemGroup>
     <FxCompile Include="postprocessingshader.hlsl" />
     <FxCompile Include="raytracingshader.hlsl" />
-    <FxCompile Include="maxluminanceshader.hlsl" />
   </ItemGroup>
 </Project>

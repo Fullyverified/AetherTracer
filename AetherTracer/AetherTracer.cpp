@@ -18,7 +18,7 @@ void AetherTracer::run() {
 	std::chrono::milliseconds frameEndTime;
 
 	SDL_Event event;
-	while (!window->shouldClose()) {
+	while (!window->shouldClose() && running) {
 		frameStartTime = std::chrono::high_resolution_clock::now();
 
 		auto deltaTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - physicsTime);
@@ -50,7 +50,7 @@ void AetherTracer::run() {
 
 		frameEndTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - frameStartTime);
 		UI::frameTime = std::chrono::duration<float>(frameEndTime).count() * 1000;
-		UI::numRays = config.accumulate ? ++UI::numRays : 1;
+		UI::numRays = config.accumulate && !entityManager->camera->camMoved ? ++UI::numRays : 1;
 		entityManager->camera->camMoved = false;
 	}
 
@@ -73,7 +73,7 @@ void AetherTracer::init() {
 	materialManager = new MaterialManager();
 	entityManager = new EntityManager(materialManager);
 	inputManager = new InputManager(this);
-	window = new Window{ "Aether Tracer", 1200, 1200 };
+	window = new Window{ "Aether Tracer", config.resX, config.resY };
 
 	meshManager->initMeshes();
 	materialManager->initDefaultMaterials();

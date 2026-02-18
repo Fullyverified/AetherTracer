@@ -56,6 +56,18 @@ void ComputeStage::updateRand() {
 
 }
 
+void ComputeStage::initMaxLumBuffer() {
+
+	std::vector<float> lum;
+	lum.resize(1);
+	lum[0] = 1.0f;
+	rm->maxLumBuffer = createBuffers(lum.data(), sizeof(float), D3D12_RESOURCE_STATE_COMMON, true);
+	rm->maxLumBuffer->defaultBuffers->SetName(L"Max Luminance Buffer");
+	pushBuffer(rm->maxLumBuffer, sizeof(float), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+
+};
+
 void ComputeStage::initRenderTarget() {
 
 	std::cout << "initRenderTarget"<<std::endl;
@@ -107,17 +119,16 @@ void ComputeStage::initComputeRootSignature() {
 
 	std::cout << "initComputeRootSignature" << std::endl;
 	// t0, accumulation texture
-	D3D12_DESCRIPTOR_RANGE srvRange = {
+	D3D12_DESCRIPTOR_RANGE accumRange = {
 		.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
 		.NumDescriptors = 1,
 		.BaseShaderRegister = 0,
 		.RegisterSpace = 0,
 		.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
-
 	};
 
 	// u0, render target
-	D3D12_DESCRIPTOR_RANGE uavRange = {
+	D3D12_DESCRIPTOR_RANGE rtRange = {
 		.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
 		.NumDescriptors = 1,
 		.BaseShaderRegister = 0,
@@ -125,21 +136,33 @@ void ComputeStage::initComputeRootSignature() {
 		.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 	};
 
+	// u1, maxLum
+	D3D12_DESCRIPTOR_RANGE maxLumRange = {
+		.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
+		.NumDescriptors = 1,
+		.BaseShaderRegister = 1,
+		.RegisterSpace = 0,
+		.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+	};
+
+	// tone map params, cbv
 	D3D12_ROOT_PARAMETER toneParam = {};
 	toneParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	toneParam.Descriptor.ShaderRegister = 0;
 	toneParam.Descriptor.RegisterSpace = 0;
 	toneParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-	D3D12_ROOT_PARAMETER params[3] = {
-		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &srvRange}},
-		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &uavRange}},
+	D3D12_ROOT_PARAMETER params[4] = {
+		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &accumRange}},
+		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &rtRange}},
+		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &maxLumRange}},
+
 	};
 
-	params[2] = toneParam;
+	params[3] = toneParam;
 
 	D3D12_ROOT_SIGNATURE_DESC desc = {
-		.NumParameters = 3,
+		.NumParameters = 4,
 		.pParameters = params,
 		.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE
 	};
@@ -171,12 +194,12 @@ void ComputeStage::initComputeDescriptors() {
 
 	std::cout << "initComputeDescriptors" << std::endl;
 
-	UINT numDescriptors = 3; // SRV accumulationTexture, UAV renderTarget, CBV params
+	UINT numDescriptors = 4; // SRV accumulationTexture, UAV renderTarget, UAV maxLum, CBV params
 	descriptorIncrementSize = rm->d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {
 	.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-	.NumDescriptors = 3,
+	.NumDescriptors = 4,
 	.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
 	};
 
@@ -203,6 +226,15 @@ void ComputeStage::initComputeDescriptors() {
 	rm->d3dDevice->CreateUnorderedAccessView(rm->renderTarget, nullptr, &uavDesc, cpuHandle);
 	cpuHandle.ptr += descriptorIncrementSize;
 
+	// slot 2 UAV for maxLumBuffer
+	uavDesc = {};
+	uavDesc.Format = DXGI_FORMAT_UNKNOWN,
+	uavDesc.Buffer.StructureByteStride = sizeof(float),
+	uavDesc.Buffer.NumElements = 1;
+	uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER,
+	rm->d3dDevice->CreateUnorderedAccessView(rm->maxLumBuffer->defaultBuffers, nullptr, &uavDesc, cpuHandle);
+	cpuHandle.ptr += descriptorIncrementSize;
+
 	// CBV post processing params
 	D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
 	cbvDesc.BufferLocation = rm->toneMappingConstantBuffer->defaultBuffers->GetGPUVirtualAddress();
@@ -211,6 +243,7 @@ void ComputeStage::initComputeDescriptors() {
 	cpuHandle.ptr += descriptorIncrementSize;
 
 }
+
 
 void ComputeStage::postProcess() {
 
@@ -231,12 +264,23 @@ void ComputeStage::postProcess() {
 	gpuHandle.ptr += descriptorIncrementSize;
 	rm->cmdList->SetComputeRootDescriptorTable(1, gpuHandle); // u1
 	gpuHandle.ptr += descriptorIncrementSize;
-	rm->cmdList->SetComputeRootConstantBufferView(2, rm->toneMappingConstantBuffer->defaultBuffers->GetGPUVirtualAddress()); // maxLum, etc
+	rm->cmdList->SetComputeRootDescriptorTable(2, gpuHandle); // u1
+
+	rm->cmdList->SetComputeRootConstantBufferView(3, rm->toneMappingConstantBuffer->defaultBuffers->GetGPUVirtualAddress()); // maxLum, etc
 
 	// start compute shader
 
 	UINT groupsX = (rm->renderTarget->GetDesc().Width + 15) / 16;
 	UINT groupsY = (rm->renderTarget->GetDesc().Height + 15) / 16;
+
+	rm->toneMappingParams->stage = 0; // max Luminance
+	updateToneParams();
+
+	rm->cmdList->Dispatch(groupsX, groupsY, 1);
+
+	rm->toneMappingParams->stage  = 1; // tone Map
+	updateToneParams();
+
 	rm->cmdList->Dispatch(groupsX, groupsY, 1);
 
 	// transition accumulation texture from SRV TO UAV for next frame

@@ -12,9 +12,8 @@
 
 void MeshManager::initMeshes() { 
 
-
-    //std::vector<std::string> models = { "companionCubeLow", "weirdTriangle", "cube", "sphere"};
-    std::vector<std::string> models = { "weirdTriangle", "cube", "sphere", "cornell"};
+    std::vector<std::string> models = { "weirdTriangle", "cube", "sphere", "cornell" };
+    //std::vector<std::string> models = { "weirdTriangle", "cube", "sphere", "cornell", "TheStanfordDragon", "lucyScaled"};
 
     for (std::string name : models) {
         loadFromObject(name, false, false);
@@ -23,6 +22,8 @@ void MeshManager::initMeshes() {
 }
 
 void MeshManager::loadFromObject(const std::string& fileName, bool forceOpaque, bool computeNormalsIfMissing) {
+
+    std::cout << "starting load" << std::endl;
 
 	tinyobj::attrib_t attrib;
 	std::vector<tinyobj::shape_t> shapes;
@@ -50,12 +51,16 @@ void MeshManager::loadFromObject(const std::string& fileName, bool forceOpaque, 
 
     LoadedModel* model = new LoadedModel(fileName);
 
+    std::cout << "reading shapes" << std::endl;
+
     for (const auto& shape : shapes) {
     
         Mesh mesh;
         mesh.name = shape.name;
 
         std::unordered_map<VertexKey, uint32_t> uniqueVertices;
+
+        std::cout << "for index of mesh indices" << std::endl;
 
         for (const auto& index : shape.mesh.indices) {
             Vertex vertex{};
@@ -86,6 +91,11 @@ void MeshManager::loadFromObject(const std::string& fileName, bool forceOpaque, 
                     1.0f - attrib.texcoords[ti + 1] // flip v
                 };
             }
+
+
+            //mesh.vertices.push_back(vertex);
+            //mesh.indices.push_back(static_cast<uint32_t>(mesh.vertices.size()) - 1);
+
 
             // deduplication
             VertexKey vertexKey{vertex.position.x, vertex.position.y, vertex.position.z, vertex.normal.x, vertex.normal.y, vertex.normal.z, vertex.texcoord.x, vertex.texcoord.y };

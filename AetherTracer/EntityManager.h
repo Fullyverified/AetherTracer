@@ -34,7 +34,7 @@ public:
 		PT::Vector2 rotation; // degrees
 
 		float fovYDegrees = 60.0f;
-		float aspect = 1.0f;
+		float aspect = config.aspectX / config.aspectY;
 		float aperture = 0.0f; // DOF
 		float focusDistance = 10.0f;
 

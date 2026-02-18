@@ -28,6 +28,7 @@ public:
 
 	void run();
 
+	bool running = true;
 	MeshManager* meshManager;
 	MaterialManager* materialManager;
 	EntityManager* entityManager;

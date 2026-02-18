@@ -29,8 +29,12 @@ void InputManager::processInput(SDL_Event& event) {
 			lockMouse = lockMouse == true ? false : true;
 			aetherTracer->window->setRelativeMouse(aetherTracer->inputManager->lockMouse);
 		}
+		if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
+			aetherTracer->running = false;
+		}
 
 	}
+
 
 }
 

@@ -4,8 +4,8 @@ struct Config {
 
     // initial state
 
-    float resX = 1200;
-    float resY = 1200;
+    int resX = 1200;
+    int resY = 1200;
     float aspectX = 1;
     float aspectY = 1;
 

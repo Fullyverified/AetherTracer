@@ -123,13 +123,14 @@ public:
 	ID3D12Resource* renderTarget;
 
 	struct alignas(256)ToneMappingParams {
-		ToneMappingParams() : maxLum(20.0f), numIts(1.0f), exposure(1.0f) {};
-		float maxLum;
+		ToneMappingParams() : stage(0.0f), numIts(1.0f), exposure(1.0f) {};
+		UINT stage;
 		float exposure;
 		UINT numIts;
 	};
 	ToneMappingParams* toneMappingParams;
 	Buffer* toneMappingConstantBuffer;
+	Buffer* maxLumBuffer;
 
 	// SHARED
 

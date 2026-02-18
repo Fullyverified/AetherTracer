@@ -22,6 +22,7 @@ public:
 
 
 	void initStage();
+	void initMaxLumBuffer();
 	void initRenderTarget();
 	void updateRand();
 	void updateToneParams();

@@ -70,6 +70,7 @@ void DX12Renderer::init() {
 	computeStage->initRenderTarget();
 	computeStage->updateRand();
 	computeStage->updateToneParams();
+	computeStage->initMaxLumBuffer();
 
 	std::cout << "raytracingStage->initStage();" << std::endl;
 	raytracingStage->initStage();
@@ -271,7 +272,6 @@ void DX12Renderer::accumulationReset() {
 void DX12Renderer::render() {
 
 	raytracingStage->updateCamera();
-	computeStage->updateToneParams();
 	raytracingStage->traceRays();
 	computeStage->postProcess();
 
