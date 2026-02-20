@@ -88,6 +88,7 @@ public:
 
 		DirectX::XMFLOAT4X4 invViewProj;
 		UINT seed;
+		bool sky;
 	};
 
 	// MODEL
@@ -137,7 +138,7 @@ public:
 	ID3D12Resource* accumulationTexture;
 
 	Buffer* randBuffer;
-	std::vector<UINT> randPattern;
+	std::vector<uint64_t> randPattern;
 
 
 	UINT num_frames = 1;

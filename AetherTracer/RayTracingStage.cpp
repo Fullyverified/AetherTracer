@@ -242,7 +242,6 @@ void RayTracingStage::initModelBLAS() {
 
 void RayTracingStage::updateCamera() {
 
-
 	entityManager->camera->update();
 
 	using namespace DirectX;
@@ -251,6 +250,7 @@ void RayTracingStage::updateCamera() {
 
 	rm->dx12Camera->position = { entityCamera->position.x, entityCamera->position.y, entityCamera->position.z };
 	rm->dx12Camera->seed = rm->seed;
+	rm->dx12Camera->sky = config.sky;
 
 	PT::Vector3 position = entityCamera->position;
 	PT::Vector3 right = entityCamera->right;
@@ -433,6 +433,7 @@ void RayTracingStage::initMaterialBuffer() {
 
 	for (ResourceManager::DX12Entity* dx12Entity : rm->dx12Entitys) {
 
+		std::cout << "Entity Name: " << dx12Entity->entity->name << std::endl;
 
 		ResourceManager::DX12Material* dx12Mateiral = dx12Entity->material;
 		std::cout << "Material name: " << dx12Entity->entity->material->name << std::endl;
@@ -445,7 +446,7 @@ void RayTracingStage::initMaterialBuffer() {
 			std::cout << "instanceIndex: " << instanceIndex << std::endl;
 		}
 		else {
-			instanceIndex = rm->uniqueInstancesID[dx12Entity->entity->name];
+			instanceIndex = rm->uniqueInstancesID[dx12Entity->entity->material->name];
 			std::cout << "In map " << std::endl;
 			std::cout << "instanceIndex: " << instanceIndex << std::endl;
 		}
@@ -621,7 +622,7 @@ void RayTracingStage::initRTDescriptors() {
 	// slot 1 UAV for RNG Buffer
 	uavDesc = {};
 	uavDesc.Format = DXGI_FORMAT_UNKNOWN,
-		uavDesc.Buffer.StructureByteStride = sizeof(UINT),
+		uavDesc.Buffer.StructureByteStride = sizeof(uint64_t),
 		uavDesc.Buffer.NumElements = rm->randPattern.size();
 	uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER,
 
@@ -823,7 +824,7 @@ void RayTracingStage::initRTPipeline() {
 	};
 
 	D3D12_RAYTRACING_SHADER_CONFIG shaderCfg = {
-	.MaxPayloadSizeInBytes = 72,
+	.MaxPayloadSizeInBytes = 76,
 	.MaxAttributeSizeInBytes = 8, // triangle attribs
 	};
 

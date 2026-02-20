@@ -4,10 +4,10 @@ struct Config {
 
     // initial state
 
-    int resX = 1200;
-    int resY = 1200;
-    float aspectX = 1;
-    float aspectY = 1;
+    int resX = 3440;
+    int resY = 1440;
+    float aspectX = 21;
+    float aspectY = 9;
 
     // Multiple Importance Sampling
     int raysPerPixel = 1;
@@ -21,7 +21,7 @@ struct Config {
     float focalDistance = 15.0f;
  
     float exposure = 1;
-    bool sky = false;
+    bool sky = true;
     bool imgui = false;
 
     float mouseSensitivity = 0.1f;

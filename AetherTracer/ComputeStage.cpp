@@ -21,38 +21,39 @@ void ComputeStage::updateRand() {
 
 	std::random_device rd;
 	std::mt19937 gen(rd());
-	std::uniform_int_distribution<UINT> dist;
+	std::uniform_int_distribution<uint64_t> dist;
 
 	std::cout << "width: " << rm->width << ", height: " << rm->height << std::endl;
 
 	rm->randPattern.resize(rm->width * rm->height);
 
-	for (UINT x = 0; x < rm->width; x++) {
+	for (uint64_t x = 0; x < rm->width; x++) {
 		
-		for (UINT y = 0; y < rm->height; y++) {
+		for (uint64_t y = 0; y < rm->height; y++) {
 
-			UINT state = ((y << 16u) | x) ^ (rm->seed * 1664525u * static_cast<UINT>(GetTickCount64())) ^ 0xdeadbeefu;
+			uint64_t state = ((y << 16u) | x) ^ (rm->seed * 1664525u * static_cast<uint64_t>(GetTickCount64())) ^ 0xdeadbeefu;
 
 			// PCG hash function
 
-			UINT word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+			uint64_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
 			word = (word >> 22u) ^ word;
 
-			UINT rot = state >> 28u;
+			uint64_t rot = state >> 28u;
 
 			word = (word >> rot) | (word << (32u - rot));
 
 			rm->randPattern[x + y * rm->width] = word;
 			//rm->randPattern[x + y * rm->width] = dist(gen);
-			//rm->randPattern[x + y * rm->width] = x + y * rm->width;
 		}
 	}
 
-	size_t randSize = rm->randPattern.size() * sizeof(UINT);
+	size_t randSize = rm->randPattern.size() * sizeof(uint64_t);
 	rm->randBuffer = createBuffers(rm->randPattern.data(), randSize, D3D12_RESOURCE_STATE_COMMON, true);
 	rm->randBuffer->defaultBuffers->SetName(L"rng Defaut Buffer");
 	pushBuffer(rm->randBuffer, randSize, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
+	std::cout << "randPattern[5]: " << rm->randPattern[5] << std::endl;
+	std::cout << "randPattern[5]: " << rm->randPattern[6] << std::endl;
 
 }
 

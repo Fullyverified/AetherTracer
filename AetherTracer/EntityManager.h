@@ -84,11 +84,11 @@ public:
 			camMoved = true;
 		}
 		void moveUp(float deltaTime) {
-			position = position + up * (deltaTime * config.sensitivity);
+			position = position + worldUp * (deltaTime * config.sensitivity);
 			camMoved = true;
 		}
 		void moveDown(float deltaTime) {
-			position = position - up * (deltaTime * config.sensitivity);
+			position = position - worldUp * (deltaTime * config.sensitivity);
 			camMoved = true;
 		}
 

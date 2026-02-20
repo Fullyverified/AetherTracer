@@ -21,14 +21,16 @@ void EntityManager::initScene() {
     entitys.emplace_back(new Entity{ "cornell", {12, 0, 0}, {0, 0, 0}, materialManager->materials["White Plastic"] }); // back wall
 
     entitys.emplace_back(new Entity{ "cube", {6, 3.925, 0}, {0, 0, 0}, materialManager->materials["Light"] }); // light
+    entitys.emplace_back(new Entity{ "cube", {12, 12, 0}, {0, 0, 0}, materialManager->materials["Light"] }); // high
 
-    entitys.emplace_back(new Entity{ "cube", {7, -2, 1.25}, {0, -0.3, 0}, materialManager->materials["White Plastic"] });
-    entitys.emplace_back(new Entity{ "cube", {7, 0, 1.25}, {0, -0.3, 0}, materialManager->materials["White Plastic"] });
+    //entitys.emplace_back(new Entity{ "cube", {7, -2, 1.25}, {0, -0.3, 0}, materialManager->materials["White Plastic"] });
+    //entitys.emplace_back(new Entity{ "cube", {7, 0, 1.25}, {0, -0.3, 0}, materialManager->materials["White Plastic"] });
 
-    entitys.emplace_back(new Entity{ "cube", {5, -2, -1.25}, {0, 0.4, 0}, materialManager->materials["White Plastic"] });
+    //entitys.emplace_back(new Entity{ "cube", {5, -2, -1.25}, {0, 0.4, 0}, materialManager->materials["White Plastic"] });
+    //entitys.emplace_back(new Entity{ "sphere", {5, -2, -1.25}, {0, 0.4, 0}, materialManager->materials["Glass"] });
 
     //entitys.emplace_back(new Entity{ "lucyScaled", {6, -3.2, 0}, {0, 0, 0}, materialManager->materials["White Plastic"] });
-    //entitys.emplace_back(new Entity{ "TheStanfordDragon", {6, -3, 0}, {0, 0, 0}, materialManager->materials["White Plastic"] });
+    entitys.emplace_back(new Entity{ "TheStanfordDragon", {5, -3, 0}, {0, 200, 0}, materialManager->materials["Glass"] });
 
    
     for (Entity* entity : entitys) {

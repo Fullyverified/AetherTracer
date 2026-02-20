@@ -43,6 +43,8 @@ public:
 		materials["Shiny Copper"] = new Material{ "Shiny Copper", {0, 1, 0}, 0, 1, 1, 0, 0 };
 		materials["Mirror"] = new Material{ "Mirror", {1, 1, 1}, 0, 1, 1, 0, 0 };
 		materials["Light"] = new Material{ "Light", {1, 1, 1}, 0, 0, 1, 0, 15.0f };
+		materials["Glass"] = new Material{ "Glass", {1, 1, 1}, 0, 0, 1.5, 1, 0 };
+		materials["Diamond"] = new Material{ "Diamond", {1, 1, 1}, 0, 0, 2.42, 1, 0 };
 
 	}
 
