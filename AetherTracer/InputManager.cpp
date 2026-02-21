@@ -42,7 +42,6 @@ void InputManager::processInputContinuous(SDL_Event& event, float deltaTime) {
 
 	PT::Vector2 mousePos = { event.button.x, event.button.y };
 
-
 	// Continuous Input
 	SDL_GetRelativeMouseState(&mouseX, &mouseY);
 

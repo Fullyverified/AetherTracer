@@ -88,7 +88,11 @@ public:
 
 		DirectX::XMFLOAT4X4 invViewProj;
 		UINT seed;
-		bool sky;
+		UINT sky;
+		float skyBrighness;
+		UINT minBounces;
+		UINT maxBounces;
+		UINT jitter;
 	};
 
 	// MODEL
@@ -124,7 +128,7 @@ public:
 	ID3D12Resource* renderTarget;
 
 	struct alignas(256)ToneMappingParams {
-		ToneMappingParams() : stage(0.0f), numIts(1.0f), exposure(1.0f) {};
+		ToneMappingParams() : stage(0), numIts(1), exposure(1.0f) {};
 		UINT stage;
 		float exposure;
 		UINT numIts;

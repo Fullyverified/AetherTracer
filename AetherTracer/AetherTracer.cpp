@@ -15,13 +15,13 @@ void AetherTracer::run() {
 
 	auto frameStartTime = std::chrono::high_resolution_clock::now();
 	auto physicsTime = std::chrono::high_resolution_clock::now();
-	std::chrono::milliseconds frameEndTime;
+	std::chrono::microseconds frameEndTime;
 
 	SDL_Event event;
 	while (!window->shouldClose() && running) {
 		frameStartTime = std::chrono::high_resolution_clock::now();
 
-		auto deltaTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - physicsTime);
+		auto deltaTime = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - physicsTime);
 		while (SDL_PollEvent(&event)) {
 			ImGui_ImplSDL3_ProcessEvent(&event);
 
@@ -29,7 +29,7 @@ void AetherTracer::run() {
 			window->pollEvents(event);
 			inputManager->processInput(event);
 		}
-		inputManager->processInputContinuous(event, std::chrono::duration<float>(deltaTime).count());
+		inputManager->processInputContinuous(event, std::chrono::duration<double>(deltaTime).count());
 
 		// physics
 		// rebuild bvh
@@ -48,16 +48,18 @@ void AetherTracer::run() {
 		dx12Renderer->present();
 
 
-		frameEndTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - frameStartTime);
-		UI::frameTime = std::chrono::duration<float>(frameEndTime).count() * 1000;
-		UI::numRays = config.accumulate && !entityManager->camera->camMoved ? ++UI::numRays : 1;
+		frameEndTime = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - frameStartTime);
+		UI::frameTime = std::chrono::duration<float>(frameEndTime).count();
+		UI::numRays = config.accumulate && !entityManager->camera->camMoved ? UI::numRays + config.raysPerPixel: 1;
 		entityManager->camera->camMoved = false;
+		UI::accelUpdate = false;
+		UI::accumulationUpdate = false;
 	}
 
 }
 
 void AetherTracer::updateConfig() {
-	config.accumulate = UI::accumulate;
+	//config.accumulate = UI::accumulate;
 }
 
 void AetherTracer::renderImgui() {

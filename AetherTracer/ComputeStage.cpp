@@ -52,9 +52,6 @@ void ComputeStage::updateRand() {
 	rm->randBuffer->defaultBuffers->SetName(L"rng Defaut Buffer");
 	pushBuffer(rm->randBuffer, randSize, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
-	std::cout << "randPattern[5]: " << rm->randPattern[5] << std::endl;
-	std::cout << "randPattern[5]: " << rm->randPattern[6] << std::endl;
-
 }
 
 void ComputeStage::initMaxLumBuffer() {

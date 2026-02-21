@@ -4,7 +4,7 @@
     float3 emission : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     float3 pos : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     float3 dir : read(caller, closesthit, miss) : write(caller, closesthit, miss);
-    uint numBounces : read(caller, closesthit, miss) : write(caller, closesthit, miss);
+    uint bounceNum : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     bool missed : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     bool internal : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     uint2 pixelIndex : read(caller, closesthit, miss) : write(caller);
@@ -47,12 +47,16 @@ cbuffer Camerab : register(b0)
     row_major float4x4 InvVieProj;
     uint numFrames;
     bool sky;
+    float skyBrightness;
+    uint minBounces;
+    uint maxBounces;
+    bool jitter;
 }
 
 
 // constants
-static const float3 skyTop = float3(0.24, 0.44, 0.72);
-static const float3 skyBottom = float3(0.75, 0.86, 0.93);
+static const float3 skyTop = float3(0.24, 0.44, 0.9);
+static const float3 skyBottom = float3(0.75, 0.86, 1.0);
 static const float PI = 3.141592653589793; // why not
 
 float randomPCG(inout uint64_t state)
@@ -75,9 +79,13 @@ void RayGeneration()
     
     uint64_t state = randPattern[pixelIndex.x + pixelIndex.y * dims.x];
     randomPCG(state); // initialize
-    float2 jitter = float2(randomPCG(state), randomPCG(state)) - 0.5f;
-    
-    float2 uv = (pixelIndex + 0.5f + jitter) / float2(dims);
+    float2 jitterAmount = float2(0.0f, 0.0f);
+    if (jitter)
+    {
+        jitterAmount = float2(randomPCG(state), randomPCG(state)) - 0.5f;
+    }
+
+    float2 uv = (pixelIndex + 0.5f + jitterAmount) / float2(dims);
     
     // NDC [-1 , 1]
     
@@ -99,30 +107,48 @@ void RayGeneration()
     payload.missed = false;
     payload.pixelIndex = pixelIndex;
     payload.dims = dims;
-    payload.numBounces = 0;
+    payload.bounceNum = 0;
     payload.internal = false;
     float3 finalColor = float3(0.0f, 0.0f, 0.0f);
     
-    for (uint numBounces = 0; numBounces <= 8; numBounces++)
+    for (uint i = 0; i <= maxBounces; i++)
     {
         RAY_FLAG ray_flags = payload.internal ? RAY_FLAG_NONE : RAY_FLAG_CULL_BACK_FACING_TRIANGLES; // for refraction
         TraceRay(scene, ray_flags, 0xFF, 0, 0, 0, ray, payload);
-        
-        
+       
         ray.Origin = payload.pos;
         ray.Direction = payload.dir;
-       
-        finalColor += payload.throughput * payload.emission;
-     
+        
+        // terminate ray if at end of path
         if (payload.missed || payload.emission.x > 0.0f || payload.emission.y > 0.0f || payload.emission.z > 0.0f)
         {
+            finalColor += payload.throughput * payload.emission;
             break;
         }
+        
+        // Russian roullete
+        if (i > minBounces)
+        {
+            float maxComponent = max(payload.throughput.x, max(payload.throughput.y, payload.throughput.z));
+            uint64_t state = randPattern[pixelIndex.x + pixelIndex.y * dims.x];
+            float rand = randomPCG(state);
+            randPattern[payload.pixelIndex.x + payload.pixelIndex.y * payload.dims.x] = state; // write back updated state
+            if (rand > maxComponent)
+            {
+                finalColor += payload.throughput * payload.emission;
+                break;
+            }
+            payload.throughput *= 1.0f / maxComponent;
 
+
+        }
+        
+        
     }
     
+    
     accumulationTexture[pixelIndex] += float4(finalColor, 1.0f);
-}
+    }
 
 float3 SampleHemisphere(float a, float b)
 {
@@ -500,7 +526,7 @@ void ClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes att
     randomPCG(state); // initialize
     
     float2 uv = attribs.barycentrics;
-    payload.numBounces++;
+    payload.bounceNum++;
     Shade(payload, uv, state);
     
     randPattern[payload.pixelIndex.x + payload.pixelIndex.y * payload.dims.x] = state; // write back updated state
@@ -516,8 +542,11 @@ void Miss(inout Payload payload)
         payload.throughput *= float3(0.0f, 0.0f, 0.0f);
         return;
     }
+    
+     
     float slope = normalize(WorldRayDirection()).y;
-    float t = saturate(slope * 5 + 0.5);
+    float t = saturate(slope * 2 + 0.5);
     payload.throughput *= lerp(skyBottom, skyTop, t);
+    payload.emission = skyBrightness;
     return;
 }

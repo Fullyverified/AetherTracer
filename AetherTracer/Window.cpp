@@ -8,7 +8,7 @@
 
 // thanks grok
 
-Window::Window(const std::string& title, int w, int h) {
+Window::Window(const std::string& title, uint32_t w, uint32_t h) {
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
         throw std::runtime_error("SDL_InitSubSystem failed: " + std::string(SDL_GetError()));
     }

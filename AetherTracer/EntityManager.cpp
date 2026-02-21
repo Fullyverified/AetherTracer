@@ -29,8 +29,9 @@ void EntityManager::initScene() {
     //entitys.emplace_back(new Entity{ "cube", {5, -2, -1.25}, {0, 0.4, 0}, materialManager->materials["White Plastic"] });
     //entitys.emplace_back(new Entity{ "sphere", {5, -2, -1.25}, {0, 0.4, 0}, materialManager->materials["Glass"] });
 
-    //entitys.emplace_back(new Entity{ "lucyScaled", {6, -3.2, 0}, {0, 0, 0}, materialManager->materials["White Plastic"] });
-    entitys.emplace_back(new Entity{ "TheStanfordDragon", {5, -3, 0}, {0, 200, 0}, materialManager->materials["Glass"] });
+    //entitys.emplace_back(new Entity{ "lucyScaled", {6, -3.05, 0}, {0, 0, 0}, materialManager->materials["Glass"] });
+    entitys.emplace_back(new Entity{ "TheStanfordDragon", {5, -3, 0}, {0, 200, 0}, materialManager->materials["Orange Glass"] });
+    //entitys.emplace_back(new Entity{ "diamondFlat", {5, -3, 0}, {0, 0, 0}, materialManager->materials["Diamond"] });
 
    
     for (Entity* entity : entitys) {

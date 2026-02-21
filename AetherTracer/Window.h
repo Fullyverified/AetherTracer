@@ -10,7 +10,7 @@
 
 class Window {
 public:
-    Window(const std::string& title = "Renderer", int initialWidth = 1200, int initialHeight = 1200);
+    Window(const std::string& title = "Renderer", uint32_t initialWidth = 1200, uint32_t initialHeight = 1200);
     ~Window();
 
     Window(const Window&) = delete;

@@ -141,6 +141,7 @@ void DX12Renderer::initSurfaces() {
 	   .SampleDesc = rm->NO_AA,
 	   .BufferCount = 2,
 	   .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
+	   .Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING,
 	};
 	IDXGISwapChain1* swapChain1;
 
@@ -275,7 +276,7 @@ void DX12Renderer::render() {
 	raytracingStage->traceRays();
 	computeStage->postProcess();
 
-	rm->num_frames = (config.accumulate & !entityManager->camera->camMoved) ? rm->num_frames + 1 : 1;
+	rm->num_frames = (config.accumulate & !entityManager->camera->camMoved) ? rm->num_frames + config.raysPerPixel : 1;
 	rm->seed++;
 
 	ImGui::Render();
@@ -297,7 +298,6 @@ void DX12Renderer::imguiPresent(ID3D12Resource* backBuffer) {
 }
 
 void DX12Renderer::present() {
-
 
 	// copy image onto swap chain's current buffer
 	ID3D12Resource* backBuffer;
@@ -329,7 +329,7 @@ void DX12Renderer::present() {
 	rm->cmdQueue->ExecuteCommandLists(1, lists);
 
 	flush();
-	rm->swapChain->Present(1, 0);
+	rm->swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
 
 	// To finish whole frame??
 	rm->cmdAlloc->Reset();

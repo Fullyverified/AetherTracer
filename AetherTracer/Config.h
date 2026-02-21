@@ -1,18 +1,22 @@
 #pragma once
 
+#include <cstdint>
+
 struct Config {
 
     // initial state
 
-    int resX = 3440;
-    int resY = 1440;
+    uint32_t resX = 3440;
+    uint32_t resY = 1440;
     float aspectX = 21;
     float aspectY = 9;
 
     // Multiple Importance Sampling
-    int raysPerPixel = 1;
-    int numBounces = 0;
+    uint32_t raysPerPixel = 1;
+    int minBounces = 0;
+    int maxBounces = 50;
     bool accumulate = true;
+    bool jitter = true;
 
     // other
     float fOV = 45;
@@ -21,11 +25,14 @@ struct Config {
     float focalDistance = 15.0f;
  
     float exposure = 1;
-    bool sky = true;
-    bool imgui = false;
+    bool sky = false;
+    float skyBrightness = 1.0f;
 
     float mouseSensitivity = 0.1f;
     float sensitivity = 5.0f;
+
+    int minBouncesMax = 100;
+    int maxBouncesMax = 100;
 };
 
 extern Config config;

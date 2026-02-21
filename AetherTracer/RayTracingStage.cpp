@@ -1,6 +1,7 @@
 #include "RayTracingStage.h"
 #include <d3dcompiler.h> // for compiling shaders
 #include "Config.h"
+#include "UI.h"
 
 bool debugstage = true;
 
@@ -250,7 +251,11 @@ void RayTracingStage::updateCamera() {
 
 	rm->dx12Camera->position = { entityCamera->position.x, entityCamera->position.y, entityCamera->position.z };
 	rm->dx12Camera->seed = rm->seed;
-	rm->dx12Camera->sky = config.sky;
+	rm->dx12Camera->sky = config.sky == true ? 1u : 0u;
+	rm->dx12Camera->skyBrighness = config.skyBrightness;
+	rm->dx12Camera->minBounces = config.minBounces;
+	rm->dx12Camera->maxBounces = config.maxBounces;
+	rm->dx12Camera->jitter = config.jitter == true ? 1u : 0u;
 
 	PT::Vector3 position = entityCamera->position;
 	PT::Vector3 right = entityCamera->right;
@@ -895,12 +900,15 @@ void RayTracingStage::traceRays() {
 	ID3D12DescriptorHeap* heaps[] = { raytracingDescHeap };
 	rm->cmdList->SetDescriptorHeaps(1, heaps);
 
-	if (!config.accumulate || entityManager->camera->camMoved) {
+	if (!config.accumulate || entityManager->camera->camMoved || UI::accumulationUpdate || UI::accelUpdate) {
 		// slot 0 UAV for accumulation texture
 		D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = cpuDescHeap->GetCPUDescriptorHandleForHeapStart();
 		D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = raytracingDescHeap->GetGPUDescriptorHandleForHeapStart();
 		rm->cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // u0 accum UAV
 		rm->cmdList->ClearUnorderedAccessViewFloat(gpuHandle, cpuHandle, rm->accumulationTexture, rm->clearColor, 0, nullptr);
+
+		UI::accelUpdate = false;
+		UI::accumulationUpdate = false;
 	}
 
 	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = raytracingDescHeap->GetGPUDescriptorHandleForHeapStart();
@@ -939,7 +947,10 @@ void RayTracingStage::traceRays() {
 		.Width = static_cast<UINT>(rtDesc.Width),
 		.Height = rtDesc.Height,
 		.Depth = 1 };
-	rm->cmdList->DispatchRays(&dispatchDesc);
+
+	for (size_t i = 0; i < config.raysPerPixel; i++) {
+		rm->cmdList->DispatchRays(&dispatchDesc);
+	}
 
 	// transition accumulation texture from SRV TO UAV for next frame
 	D3D12_RESOURCE_BARRIER barrier = {};
