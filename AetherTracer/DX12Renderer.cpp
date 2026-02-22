@@ -276,7 +276,7 @@ void DX12Renderer::render() {
 	raytracingStage->traceRays();
 	computeStage->postProcess();
 
-	rm->num_frames = (config.accumulate & !entityManager->camera->camMoved) ? rm->num_frames + config.raysPerPixel : 1;
+	rm->iterations = (config.accumulate & !entityManager->camera->camMoved) ? rm->iterations + config.raysPerPixel : config.raysPerPixel;
 	rm->seed++;
 
 	ImGui::Render();

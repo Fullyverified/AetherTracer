@@ -145,7 +145,7 @@ public:
 	std::vector<uint64_t> randPattern;
 
 
-	UINT num_frames = 1;
+	UINT iterations = 1;
 	UINT seed = 1;
 
 	UINT frameIndexInFlight = 2;

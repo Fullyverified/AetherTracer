@@ -1,4 +1,4 @@
-# Blender 4.4.0 MTL File: 'Sketchfab_2023_05_08_17_26_35.blend'
+# Blender 5.0.1 MTL File: 'None'
 # www.blender.org
 
 newmtl M_Character_PortalGun
@@ -8,10 +8,10 @@ Ke 1.000000 1.000000 1.000000
 Ni 1.450000
 d 1.000000
 illum 2
-map_Kd C:/Users/hazza/Downloads/Blender/Portal/portal-rtx-assets-portal-gun/textures/Albedoout.png
-map_Ns C:/Users/hazza/Downloads/Blender/Portal/portal-rtx-assets-portal-gun/textures/T_Charracter_PortalGun_Roughout.png
-map_refl C:/Users/hazza/Downloads/Blender/Portal/portal-rtx-assets-portal-gun/textures/T_Charracter_PortalGun_Metalout.png
-map_Bump -bm 1.000000 C:/Users/hazza/Downloads/Blender/Portal/portal-rtx-assets-portal-gun/textures/T_Charracter_PortalGun_Normal_OTHout.png
+map_Kd Blender/Portal/portal-rtx-assets-portal-gun/textures/Albedoout.png
+map_Ns Blender/Portal/portal-rtx-assets-portal-gun/textures/T_Charracter_PortalGun_Roughout.png
+map_refl Blender/Portal/portal-rtx-assets-portal-gun/textures/T_Charracter_PortalGun_Metalout.png
+map_Bump -bm 1.000000 Blender/Portal/portal-rtx-assets-portal-gun/textures/T_Charracter_PortalGun_Normal_OTHout.png
 
 newmtl M_Character_PortalGun_Glass
 Ns 360.000000

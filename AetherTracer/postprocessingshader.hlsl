@@ -42,7 +42,8 @@ void maxLuminance(uint3 dispatchID : SV_DispatchThreadID, uint3 groupThreadID : 
     // one thread per group does global atomic max
     if (groupIndex == 0)
     {
-        uint lumBits = asuint(g_maxLum[0]);
+        //uint lumBits = asuint(g_maxLum[0]);
+        uint lumBits = asuint(20.0f);
         InterlockedMax(maxLumBuffer[0], lumBits);
 
     }
@@ -51,7 +52,8 @@ void maxLuminance(uint3 dispatchID : SV_DispatchThreadID, uint3 groupThreadID : 
 
 void toneMap(uint3 dispatchID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint groupIndex : SV_GroupIndex)
 {
-    float maxLuminance = maxLumBuffer[0];
+    //float maxLuminance = asfloat(maxLumBuffer[0]);
+    float maxLuminance = 15.0f;
     
     uint2 dim;
     accumulationTexture.GetDimensions(dim.x, dim.y);

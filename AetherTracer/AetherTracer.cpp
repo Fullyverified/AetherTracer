@@ -50,7 +50,7 @@ void AetherTracer::run() {
 
 		frameEndTime = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - frameStartTime);
 		UI::frameTime = std::chrono::duration<float>(frameEndTime).count();
-		UI::numRays = config.accumulate && !entityManager->camera->camMoved ? UI::numRays + config.raysPerPixel: 1;
+		UI::numRays = config.accumulate && !entityManager->camera->camMoved ? UI::numRays + config.raysPerPixel : config.raysPerPixel;
 		entityManager->camera->camMoved = false;
 		UI::accelUpdate = false;
 		UI::accumulationUpdate = false;
@@ -66,7 +66,10 @@ void AetherTracer::renderImgui() {
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplSDL3_NewFrame();
 	ImGui::NewFrame();
-	UI::renderSettings();
+
+	if (UI::renderUI) {
+		UI::renderSettings();
+	}
 }
 
 void AetherTracer::init() {

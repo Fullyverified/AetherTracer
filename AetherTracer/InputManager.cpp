@@ -32,7 +32,9 @@ void InputManager::processInput(SDL_Event& event) {
 		if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
 			aetherTracer->running = false;
 		}
-
+		if (event.key.scancode == SDL_SCANCODE_F1) {
+			UI::renderUI = UI::renderUI ? false : true;
+		}
 	}
 
 

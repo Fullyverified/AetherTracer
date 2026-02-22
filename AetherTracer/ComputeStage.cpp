@@ -56,12 +56,12 @@ void ComputeStage::updateRand() {
 
 void ComputeStage::initMaxLumBuffer() {
 
-	std::vector<float> lum;
+	std::vector<UINT> lum;
 	lum.resize(1);
-	lum[0] = 1.0f;
-	rm->maxLumBuffer = createBuffers(lum.data(), sizeof(float), D3D12_RESOURCE_STATE_COMMON, true);
+	lum[0] = 1u;
+	rm->maxLumBuffer = createBuffers(lum.data(), sizeof(UINT), D3D12_RESOURCE_STATE_COMMON, true);
 	rm->maxLumBuffer->defaultBuffers->SetName(L"Max Luminance Buffer");
-	pushBuffer(rm->maxLumBuffer, sizeof(float), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+	pushBuffer(rm->maxLumBuffer, sizeof(UINT), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
 
 };
@@ -96,7 +96,7 @@ void ComputeStage::updateToneParams() {
 		rm->toneMappingParams = new ResourceManager::ToneMappingParams();
 	}
 
-	rm->toneMappingParams->numIts = rm->num_frames;
+	rm->toneMappingParams->numIts = rm->iterations;
 
 	if (!rm->toneMappingConstantBuffer) {
 
@@ -227,7 +227,7 @@ void ComputeStage::initComputeDescriptors() {
 	// slot 2 UAV for maxLumBuffer
 	uavDesc = {};
 	uavDesc.Format = DXGI_FORMAT_UNKNOWN,
-	uavDesc.Buffer.StructureByteStride = sizeof(float),
+	uavDesc.Buffer.StructureByteStride = sizeof(UINT),
 	uavDesc.Buffer.NumElements = 1;
 	uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER,
 	rm->d3dDevice->CreateUnorderedAccessView(rm->maxLumBuffer->defaultBuffers, nullptr, &uavDesc, cpuHandle);

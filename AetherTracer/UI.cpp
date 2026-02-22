@@ -8,6 +8,7 @@
 bool UI::isWindowHovered = false;
 bool UI::accelUpdate = false; // reset by the renderer
 bool UI::accumulationUpdate = false; // reset by the renderer
+bool UI::renderUI = true;
 
 uint64_t UI::raysPerSecond = 0;
 float UI::frameTime = 0;
@@ -31,6 +32,12 @@ void UI::renderSettings() {
     ImGui::Text("Num Rays: %d", numRays);
 
     if (ImGui::Checkbox("Accumulate", &config.accumulate));
+
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x); // Set width to the available space
+    if (ImGui::SliderInt("##Samples Per Pixel", &config.raysPerPixel, 1, 50, "Samples Per Pixel %i")) {
+        accumulationUpdate = true;
+    }
+
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x); // Set width to the available space
     if (ImGui::SliderInt("##Min ray bounces", &config.minBounces, 0, config.minBouncesMax, "Min Bounces %i")) {
         if (config.maxBounces < config.minBounces) {

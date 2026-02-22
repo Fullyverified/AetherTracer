@@ -8,11 +8,13 @@ struct Config {
 
     uint32_t resX = 3440;
     uint32_t resY = 1440;
+    uint32_t internal_resX = 0;
+    uint32_t internal_resY = 0;
     float aspectX = 21;
     float aspectY = 9;
 
     // Multiple Importance Sampling
-    uint32_t raysPerPixel = 1;
+    int raysPerPixel = 1;
     int minBounces = 0;
     int maxBounces = 50;
     bool accumulate = true;

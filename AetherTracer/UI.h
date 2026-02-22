@@ -9,6 +9,8 @@ public:
 	static bool accelUpdate;
 	static bool accumulationUpdate;
 	static bool isWindowHovered;
+	static bool renderUI;
+
 	static void renderSettings();
 
 	static float frameTime;

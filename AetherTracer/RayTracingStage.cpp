@@ -907,6 +907,7 @@ void RayTracingStage::traceRays() {
 		rm->cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // u0 accum UAV
 		rm->cmdList->ClearUnorderedAccessViewFloat(gpuHandle, cpuHandle, rm->accumulationTexture, rm->clearColor, 0, nullptr);
 
+		UI::numRays = config.raysPerPixel;
 		UI::accelUpdate = false;
 		UI::accumulationUpdate = false;
 	}

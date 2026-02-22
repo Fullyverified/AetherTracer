@@ -41,6 +41,7 @@ public:
 		materials["Green Plastic"] = new Material{ "Green Plastic", {0.0f, 1.0f, 0.0f}, 0.5f, 0.0f, 1.0f, 0.0f, 0.0f };
 		materials["Blue Plastic"] = new Material{ "Blue Plastic", {0.0f, 0.0f, 1.0f}, 0.5f, 0.0f, 1.0f, 0.0f, 0.0f };
 		materials["Shiny Copper"] = new Material{ "Shiny Copper", {0.0f, 1.0f, 0.0f}, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f };
+		materials["Rough Metal"] = new Material{ "Rough Metal", {1.0f, 1.0f, 0.0f}, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f };
 		materials["Mirror"] = new Material{ "Mirror", {1.0f, 1.0f, 1}, 0.0f, 1, 1, 0, 0 };
 		materials["Light"] = new Material{ "Light", {1.0f, 1.0f, 1}, 0.0f, 0.0f, 1.0f, 0.0f, 15.0f };
 		materials["Glass"] = new Material{ "Glass", {1.0f, 1.0f, 1}, 0.0f, 0.0f, 1.5f, 1.0f, 0.0f };
@@ -48,6 +49,25 @@ public:
 		materials["Black Glass"] = new Material{ "Black Glass", {0.1f, 0.1f, 0.1f}, 0.0f, 0.0f, 1.5f, 1.0f, 0.0f };
 		materials["Diamond"] = new Material{ "Diamond", {1.0f, 1.0f, 1.0f}, 0.0f, 0.0f, 2.42f, 1.0f, 0.0f };
 
+	}
+
+	void initTextures() {
+	
+		// portal cube
+		albedos["Weighted Cube"] = "weighted_cube_texture.png";
+		albedos["Companion Cube"] = "companion_cube_texture.png";
+		emissive["Weighted Cube"] = "weighted_cube_emission.png";
+		emissive["Companion Cube"] = "companion_cube_emission.png";
+
+		// portal button
+		albedos["Button"] = "button_texture.png";
+
+		// portal gun
+		albedos["Portal Gun"] = "portal_gun_texture.png";
+		roughness["Portal Gun"] = "portal_gun_rough.png";
+		metallic["Portal Gun"] = "portal_gun_metallic.png";
+		emissive["Portal Gun"] = "portal_gun_emission.png";
+		normal["Portal Gun"] = "portal_gun_normal.png";
 	}
 
 	void cleanUp() {
@@ -60,5 +80,13 @@ public:
 
 
 	std::unordered_map<std::string, Material*> materials;
+
+	// name -> relative path
+	// "button" = "button_albedo.png"
+	std::unordered_map<std::string, std::string> albedos;
+	std::unordered_map<std::string, std::string> roughness;
+	std::unordered_map<std::string, std::string> metallic;
+	std::unordered_map<std::string, std::string> emissive;
+	std::unordered_map<std::string, std::string> normal;
 };
 

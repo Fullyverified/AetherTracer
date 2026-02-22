@@ -79,12 +79,9 @@ void RayGeneration()
     
     uint64_t state = randPattern[pixelIndex.x + pixelIndex.y * dims.x];
     randomPCG(state); // initialize
-    float2 jitterAmount = float2(0.0f, 0.0f);
-    if (jitter)
-    {
-        jitterAmount = float2(randomPCG(state), randomPCG(state)) - 0.5f;
-    }
-
+    
+    float2 jitterAmount = jitter == true ? float2(randomPCG(state), randomPCG(state)) - 0.5f : float2(0.0f, 0.0f);
+    
     float2 uv = (pixelIndex + 0.5f + jitterAmount) / float2(dims);
     
     // NDC [-1 , 1]
