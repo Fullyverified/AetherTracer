@@ -56,4 +56,6 @@ struct alignas(256)DX12Camera {
 	UINT minBounces;
 	UINT maxBounces;
 	UINT jitter;
+	UINT next_event_estimation;
+	UINT NEE_samples;
 };

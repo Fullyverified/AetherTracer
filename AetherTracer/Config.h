@@ -9,6 +9,11 @@ enum Tone_Mapper {
     Count
 };
 
+enum GFX_API {
+    DX12,
+    CUDA
+};
+
 struct Config {
 
     // initial state
@@ -25,9 +30,8 @@ struct Config {
     int minBounces = 0;
     int maxBounces = 50;
 
-    bool BSDF = true;
     bool NEE = true;
-    bool MIS = true;
+    int NEE_samples = 1;
 
     bool accumulate = true;
     bool jitter = true;
@@ -48,7 +52,6 @@ struct Config {
     uint32_t maxInstances = 512;
     uint32_t maxMaterials = 512;
 
-
     float mouseSensitivity = 0.1f;
     float sensitivity = 5.0f;
 
@@ -56,6 +59,9 @@ struct Config {
     int maxBouncesMax = 100;
 
     bool debug = true;
+
+    GFX_API gfx_api = DX12;
+    
 };
 
 extern Config config;

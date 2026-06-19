@@ -12,7 +12,7 @@ class Window;
 class MaterialManager;
 class MeshManager;
 class EntityManager;
-class DX12Renderer;
+class Renderer;
 
 class AetherTracer {
 
@@ -34,5 +34,5 @@ public:
 	EntityManager* entityManager;
 	InputManager* inputManager;
 	Window* window;
-	DX12Renderer* dx12Renderer;
+	Renderer* renderer;
 };

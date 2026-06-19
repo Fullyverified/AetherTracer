@@ -68,6 +68,15 @@ void UI::renderSettings() {
         accumulationUpdate = true;
     }
 
+    if (ImGui::Checkbox("Next Event Estimation", &config.NEE)) {
+        accumulationUpdate = true;
+    }
+
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x); // Set width to the available space
+    if (ImGui::SliderInt("##NEE Candidate Samples", &config.NEE_samples, 1, 50, "Candidate Samples % i")) {
+        accumulationUpdate = true;
+    }
+
     if (ImGui::Checkbox("Jitter", &config.jitter)) {
         accumulationUpdate = true;
     }
@@ -397,6 +406,7 @@ void UI::sceneEditor() {
         updateUIentity();
         accumulationUpdate = true;
         accelUpdate = true;
+        materialUpdate = true;
     }
 
     ImGui::SameLine();

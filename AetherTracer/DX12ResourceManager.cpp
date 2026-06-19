@@ -151,6 +151,8 @@ void DX12ResourceManager::updateCamera() {
 	dx12Camera->minBounces = config.minBounces;
 	dx12Camera->maxBounces = config.maxBounces;
 	dx12Camera->jitter = config.jitter == true ? 1u : 0u;
+	dx12Camera->next_event_estimation = config.NEE == true ? 1u : 0u;
+	dx12Camera->NEE_samples = static_cast<UINT>(config.NEE_samples);
 
 	PT::Vector3 position = entityCamera->position;
 	PT::Vector3 right = entityCamera->right;

@@ -83,6 +83,11 @@ public:
 	std::vector<DX12ResourceHandle*> allVertexBuffers;
 	std::vector<DX12ResourceHandle*> allIndexBuffers;
 
+	std::vector<DX12ResourceHandle*> emissiveEntitiesIndexBuffer; // index for each emissive object
+	std::vector<DX12ResourceHandle*> emissiveTrianglesIndexBuffer; // for each emissive object, indices only for its emissive triangles
+
+
+
 	DX12ResourceHandle* cameraConstantBuffer;
 
 	// ENTITY / BLAS
@@ -91,10 +96,6 @@ public:
 
 	std::vector<DX12Entity*> dx12entities;
 	DX12Camera* dx12Camera;
-
-	// TLAS
-	//ResourceHandle* tlas;
-	//ResourceHandle* tlas_scratch;
 
 	UINT NUM_INSTANCES = 0;
 	DX12ResourceHandle* instances;
@@ -158,7 +159,6 @@ public:
 	ID3D12PipelineState* computePSO;
 
 	// ray tracing shader tables
-	UINT64 NUM_SHADER_IDS = 3;
 	ID3D12Resource* shaderIDs;
 
 	// Heap Management

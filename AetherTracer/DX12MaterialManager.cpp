@@ -6,6 +6,7 @@
 DX12MaterialManager::DX12MaterialManager(MeshManager* meshManager, MaterialManager* materialManager, EntityManager* entityManager, IDXGIFactory4* factory, ID3D12Device5* d3dDevice, ID3D12CommandQueue* cmdQueue, ID3D12CommandAllocator* cmdAlloc, ID3D12GraphicsCommandList4* cmdList)
 	: meshManager(meshManager), materialManager(materialManager), entityManager(entityManager), factory(factory), d3dDevice(d3dDevice), cmdQueue(cmdQueue), cmdAlloc(cmdAlloc), cmdList(cmdList) {
 }
+
 void DX12MaterialManager::initMaterials(bool new_material, bool changed_material, bool entity_material_changed) {
 
 	for (auto& [name, dx12material] : dx12materials_map) {
@@ -182,6 +183,50 @@ void DX12MaterialManager::initMaterialBuffers(bool is_update) {
 	pushResourceHandle(materialsBuffer, materialsSize, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 	pushResourceHandle(materialIndexBuffer, indexSize, D3D12_RESOURCE_STATE_INDEX_BUFFER, D3D12_RESOURCE_STATE_INDEX_BUFFER);
 }
+
+void DX12MaterialManager::initEmissiveIndexBuffer(bool is_update) {
+	
+	emissive_entities_indices.clear();
+
+	for (size_t i = 0; i < entityManager->entities.size(); i++) {
+
+		EntityManager::Entity* entity = entityManager->entities[i];
+
+		if (dx12materials_map[entity->material]->emission > 0) {
+
+			std::string name = entity->model + entity->material;
+			if (emissive_entities_map.find(name) == emissive_entities_map.end()) {
+
+				emissive_entities_indices.push_back(i);
+				emissive_entities_map[name] = i;
+			}
+			else {
+				emissive_entities_indices.push_back(emissive_entities_map[name]);
+			}
+		}
+
+	}
+
+	size_t indexSize = emissive_entities_indices.size() * sizeof(UINT);
+
+	size_t index_size_max = config.maxInstances * sizeof(UINT);
+
+	if (!is_update) {
+		
+		emissive_entities_indices_buffer = createResourceHandle(emissive_entities_indices.data(), indexSize, index_size_max, D3D12_RESOURCE_STATE_INDEX_BUFFER, false);
+		emissive_entities_indices_buffer->upload_buffer->SetName(L"Emissive Entities Index Upload Buffer");
+		emissive_entities_indices_buffer->default_buffer->SetName(L"Emissive Entities Index Default Buffer");
+	}
+	else {
+			
+		updateResourceHandle(emissive_entities_indices_buffer, emissive_entities_indices.data(), indexSize, index_size_max);
+
+	}
+
+	pushResourceHandle(emissive_entities_indices_buffer, indexSize, D3D12_RESOURCE_STATE_INDEX_BUFFER, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+
+}
+
 
 DX12ResourceHandle* DX12MaterialManager::createTextureFromVector(PT::Vector3 value) {
 

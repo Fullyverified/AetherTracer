@@ -69,7 +69,6 @@ void DX12PathTracerPipeLine::init() {
 	dx12ResourceManager->initDescriptorHeap(dx12ResourceManager->global_descriptor_heap_allocator, 1000, true, "Global Descriptor Heap");
 
 	std::cout << "init RTResources" << std::endl;
-	dx12ResourceManager->updateCamera();
 
 	dx12ResourceManager->initRenderTexture(dx12ResourceManager->renderTarget, DXGI_FORMAT_R8G8B8A8_UNORM, "Render Target", false); //
 	dx12ResourceManager->initRenderTexture(dx12ResourceManager->accumulationTexture, DXGI_FORMAT_R32G32B32A32_FLOAT, "Accumulation Texture", false); //
@@ -95,6 +94,9 @@ void DX12PathTracerPipeLine::init() {
 	dx12ResourceManager->cmdAlloc->Reset();
 	dx12ResourceManager->cmdList->Reset(dx12ResourceManager->cmdAlloc, nullptr);
 	dx12MaterialManager->initMaterialBuffers(false);
+	dx12MaterialManager->initEmissiveIndexBuffer(false);
+	dx12ResourceManager->updateCamera();
+
 
 	initGlobalDescriptors();
 	initRootSignature();
@@ -284,12 +286,20 @@ void DX12PathTracerPipeLine::initRootSignature() {
 	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 	};
 
+	D3D12_DESCRIPTOR_RANGE emissiveEntitiesIndicesRange = {
+	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+	.NumDescriptors = 1,
+	.BaseShaderRegister = 6,
+	.RegisterSpace = 6,
+	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+	};
+
 	UINT tex_maps_size = dx12MaterialManager->texture_maps.size();
 	D3D12_DESCRIPTOR_RANGE materialTexturesRange = {
 	.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
 	.NumDescriptors = tex_maps_size,
-	.BaseShaderRegister = 6,
-	.RegisterSpace = 6,
+	.BaseShaderRegister = 7,
+	.RegisterSpace = 7,
 	.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 	};
 
@@ -307,7 +317,7 @@ void DX12PathTracerPipeLine::initRootSignature() {
 	toneParam.Descriptor.RegisterSpace = 0;
 	toneParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-	D3D12_ROOT_PARAMETER params[13] = {												// num desriptor ranges, descriptor range
+	D3D12_ROOT_PARAMETER params[14] = {												// num desriptor ranges, descriptor range
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &accumRangeUAV}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &randRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &rtRange}},
@@ -318,6 +328,7 @@ void DX12PathTracerPipeLine::initRootSignature() {
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &indexRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &materialRange}},
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &materialIndexRange}},
+		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = { 1, &emissiveEntitiesIndicesRange } },
 		{.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, .DescriptorTable = {1, &materialTexturesRange}},
 		cameraParam,
 		toneParam,
@@ -340,7 +351,7 @@ void DX12PathTracerPipeLine::initRootSignature() {
 	sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
 	D3D12_ROOT_SIGNATURE_DESC rootSigdesc = {};
-	rootSigdesc.NumParameters = 13,
+	rootSigdesc.NumParameters = static_cast<UINT>(std::size(params)),
 	rootSigdesc.pParameters = params,
 	rootSigdesc.NumStaticSamplers = 1;
 	rootSigdesc.pStaticSamplers = &sampler;
@@ -367,7 +378,7 @@ void DX12PathTracerPipeLine::initRTShaderTables() {
 
 	D3D12_RESOURCE_DESC shaderIDDesc{};
 	shaderIDDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	shaderIDDesc.Width = dx12ResourceManager->NUM_SHADER_IDS * D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT;;
+	shaderIDDesc.Width = 5 * D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT;;
 	shaderIDDesc.Height = 1;
 	shaderIDDesc.DepthOrArraySize = 1;
 	shaderIDDesc.MipLevels = 1;
@@ -389,8 +400,10 @@ void DX12PathTracerPipeLine::initRTShaderTables() {
 
 	dx12ResourceManager->shaderIDs->Map(0, nullptr, &data);
 	writeId(L"RayGeneration");
-	writeId(L"Miss");
-	writeId(L"HitGroup");
+	writeId(L"MissRadiance");
+	writeId(L"MissShadow");
+	writeId(L"HitGroupRadiance");
+	writeId(L"HitGroupShadow");
 	dx12ResourceManager->shaderIDs->Unmap(0, nullptr);
 
 	props->Release();
@@ -405,11 +418,19 @@ void DX12PathTracerPipeLine::initRayTracingPipeline() {
 	D3D12_DXIL_LIBRARY_DESC lib = {
 	.DXILLibrary = { dx12ResourceManager->rsBlob->GetBufferPointer(), dx12ResourceManager->rsBlob->GetBufferSize()} };
 
-	D3D12_HIT_GROUP_DESC hitGroup = {
-	.HitGroupExport = L"HitGroup",
+	D3D12_HIT_GROUP_DESC hitGroupRadiance = {
+	.HitGroupExport = L"HitGroupRadiance",
 	.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES,
 	.AnyHitShaderImport = nullptr,
-	.ClosestHitShaderImport = L"ClosestHit",
+	.ClosestHitShaderImport = L"ClosestHitRadiance",
+	.IntersectionShaderImport = nullptr
+	};
+
+	D3D12_HIT_GROUP_DESC hitGroupShadow = {
+	.HitGroupExport = L"HitGroupShadow",
+	.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES,
+	.AnyHitShaderImport = nullptr,
+	.ClosestHitShaderImport = L"ClosestHitShadow",
 	.IntersectionShaderImport = nullptr
 	};
 
@@ -425,7 +446,8 @@ void DX12PathTracerPipeLine::initRayTracingPipeline() {
 
 	D3D12_STATE_SUBOBJECT subobjects[] = {
 		{.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY, .pDesc = &lib},
-		{.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP, .pDesc = &hitGroup},
+		{.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP, .pDesc = &hitGroupRadiance},
+		{.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP, .pDesc = &hitGroupShadow},
 		{.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG, .pDesc = &shaderCfg},
 		{.Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE, .pDesc = &globalSig},
 		{.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG, .pDesc = &pipelineCfg},
@@ -504,7 +526,7 @@ void DX12PathTracerPipeLine::initGlobalDescriptors() {
 
 	//if (config.debug) std::cout << "tlas->heap_index_srv: " << tlas->heap_index_srv << std::endl;
 
-	// Vertex Buffer
+	// SRV Vertex Buffer
 	for (DX12ResourceHandle* vertexBuffer : dx12ResourceManager->allVertexBuffers) {
 		srvDesc = {};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
@@ -520,7 +542,7 @@ void DX12PathTracerPipeLine::initGlobalDescriptors() {
 
 		//if (config.debug) std::cout << "srvNumElementsVertex: " << srvDesc.Buffer.NumElements << std::endl;
 	}
-	// Vertex Index Buffer
+	// SRV Vertex Index Buffer
 	for (DX12ResourceHandle* indexBuffer : dx12ResourceManager->allIndexBuffers) {
 		srvDesc = {};
 		srvDesc.Format = DXGI_FORMAT_R32_UINT;
@@ -536,7 +558,7 @@ void DX12PathTracerPipeLine::initGlobalDescriptors() {
 		//if (config.debug) std::cout << "srvNumElementsIndex: " << srvDesc.Buffer.NumElements << std::endl;
 	}
 
-	// Material Buffer
+	// SRV Material Buffer
 	srvDesc = {};
 	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -549,7 +571,7 @@ void DX12PathTracerPipeLine::initGlobalDescriptors() {
 	cpuHandle.ptr += dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
 	dx12MaterialManager->materialsBuffer->heap_index_srv = dx12ResourceManager->global_descriptor_heap_allocator->alloc();
 
-	// Material Index Buffer
+	// SRV Material Index Buffer
 	srvDesc = {};
 	srvDesc.Format = DXGI_FORMAT_R32_UINT;
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -562,7 +584,20 @@ void DX12PathTracerPipeLine::initGlobalDescriptors() {
 	cpuHandle.ptr += dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
 	dx12MaterialManager->materialIndexBuffer->heap_index_srv = dx12ResourceManager->global_descriptor_heap_allocator->alloc();
 
-	// Material Textures
+	// SRV Emissive Entities Index Buffer SRV
+	srvDesc = {};
+	srvDesc.Format = DXGI_FORMAT_R32_UINT;
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+	srvDesc.Buffer.FirstElement = 0;
+	srvDesc.Buffer.NumElements = static_cast<UINT>((dx12MaterialManager->emissive_entities_indices_buffer->default_buffer->GetDesc().Width) / sizeof(UINT));
+	srvDesc.Buffer.StructureByteStride = 0;
+	d3dDevice->CreateShaderResourceView(dx12MaterialManager->emissive_entities_indices_buffer->default_buffer, &srvDesc, cpuHandle);
+
+	cpuHandle.ptr += dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
+	dx12MaterialManager->emissive_entities_indices_buffer->heap_index_srv = dx12ResourceManager->global_descriptor_heap_allocator->alloc();
+
+	// SRV Material Textures
 	for (DX12ResourceHandle* texture : dx12MaterialManager->texture_maps) {
 		srvDesc = {};
 		srvDesc.Format = texture->default_buffer->GetDesc().Format;
@@ -575,6 +610,7 @@ void DX12PathTracerPipeLine::initGlobalDescriptors() {
 		texture->heap_index_srv = dx12ResourceManager->global_descriptor_heap_allocator->alloc();
 		//if (config.debug) std::cout << "srvNumElementsIndex: " << srvDesc.Buffer.NumElements << std::endl;
 	}
+
 	// Camera CBV
 	cbvDesc = {};
 	cbvDesc.BufferLocation = dx12ResourceManager->cameraConstantBuffer->upload_buffer->GetGPUVirtualAddress();
@@ -639,44 +675,49 @@ void DX12PathTracerPipeLine::bindDescriptors() {
 	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = dx12ResourceManager->global_descriptor_heap_allocator->desc_heap->GetGPUDescriptorHandleForHeapStart();
 	UINT64 heap_start = gpuHandle.ptr;
 
+	UINT pos = 0;
+
 	gpuHandle.ptr = heap_start + dx12ResourceManager->accumulationTexture->heap_index_uav * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(0, gpuHandle); // u0 accum UAV
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // u0 accum UAV
 	
 	gpuHandle.ptr = heap_start + dx12ResourceManager->randBuffer->heap_index_uav * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(1, gpuHandle); // u1 rand UAV
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // u1 rand UAV
 
 	gpuHandle.ptr = heap_start + dx12ResourceManager->renderTarget->heap_index_uav * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(2, gpuHandle); // u2 render target
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // u2 render target
 
 	gpuHandle.ptr = heap_start + dx12ResourceManager->maxLumBuffer->heap_index_uav * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(3, gpuHandle); // u3 uav
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // u3 uav
 
 
 
 	gpuHandle.ptr = heap_start + dx12ResourceManager->accumulationTexture->heap_index_srv * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(4, gpuHandle); // accum range SRV
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // accum range SRV
 
 	gpuHandle.ptr = heap_start + dx12TLASManager->tlas->heap_index_srv * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(5, gpuHandle); // t0 TLAS SRV
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // t0 TLAS SRV
 
 	gpuHandle.ptr = heap_start + dx12ResourceManager->allVertexBuffers[0]->heap_index_srv * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(6, gpuHandle); // t1 vertex buffer SRV
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // t1 vertex buffer SRV
 
 	gpuHandle.ptr = heap_start + dx12ResourceManager->allIndexBuffers[0]->heap_index_srv * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(7, gpuHandle); // t2 index buffer SRV
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // t2 index buffer SRV
 
 	gpuHandle.ptr = heap_start + dx12MaterialManager->materialsBuffer->heap_index_srv * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(8, gpuHandle); // t3 material buffer SRV
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // t3 material buffer SRV
 
 	gpuHandle.ptr = heap_start + dx12MaterialManager->materialIndexBuffer->heap_index_srv * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(9, gpuHandle); // t3 material index buffer SRV
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // t3 material index buffer SRV
+
+	gpuHandle.ptr = heap_start + dx12MaterialManager->emissive_entities_indices_buffer->heap_index_srv * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // emissive entities indices
 
 	gpuHandle.ptr = heap_start + dx12MaterialManager->texture_maps[0]->heap_index_srv * dx12ResourceManager->global_descriptor_heap_allocator->desc_increment_size;
-	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(10, gpuHandle); // t3 material index buffer SRV
+	dx12ResourceManager->cmdList->SetComputeRootDescriptorTable(pos++, gpuHandle); // t3 material index buffer SRV
 
-	dx12ResourceManager->cmdList->SetComputeRootConstantBufferView(11, dx12ResourceManager->cameraConstantBuffer->upload_buffer->GetGPUVirtualAddress()); // b0 camera cbv
+	dx12ResourceManager->cmdList->SetComputeRootConstantBufferView(pos++, dx12ResourceManager->cameraConstantBuffer->upload_buffer->GetGPUVirtualAddress()); // b0 camera cbv
 
-	dx12ResourceManager->cmdList->SetComputeRootConstantBufferView(12, dx12ResourceManager->toneMappingConstantBuffer->upload_buffer->GetGPUVirtualAddress()); // maxLum, etc
+	dx12ResourceManager->cmdList->SetComputeRootConstantBufferView(pos++, dx12ResourceManager->toneMappingConstantBuffer->upload_buffer->GetGPUVirtualAddress()); // maxLum, etc
 
 
 }
@@ -699,6 +740,7 @@ void DX12PathTracerPipeLine::render() {
 			dx12ResourceManager->initDX12Entites(true);
 			dx12ResourceManager->updateTransforms();
 			dx12TLASManager->updateTLAS(dx12ResourceManager->instances, dx12ResourceManager->NUM_INSTANCES);
+			dx12MaterialManager->initEmissiveIndexBuffer(true);
 		}
 
 	}
@@ -706,6 +748,7 @@ void DX12PathTracerPipeLine::render() {
 	if (UI::materialUpdate) {
 		dx12MaterialManager->initMaterials(true, true, true);
 		dx12MaterialManager->initMaterialBuffers(true);
+		dx12MaterialManager->initEmissiveIndexBuffer(true);
 	}
 
 	//dx12ResourceManager->initGlobalDescriptors(dx12AccelerationStructureManager->tlas); // dynamic buffer resizing
@@ -745,19 +788,25 @@ void DX12PathTracerPipeLine::traceRays() {
 
 	auto rtDesc = dx12ResourceManager->renderTarget->default_buffer->GetDesc();
 
-	D3D12_DISPATCH_RAYS_DESC dispatchDesc = {
-		.RayGenerationShaderRecord = {
-			.StartAddress = dx12ResourceManager->shaderIDs->GetGPUVirtualAddress(),
-			.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES},
-		.MissShaderTable = {
-			.StartAddress = dx12ResourceManager->shaderIDs->GetGPUVirtualAddress() + D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT,
-			.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES},
-		.HitGroupTable = {
-			.StartAddress = dx12ResourceManager->shaderIDs->GetGPUVirtualAddress() + 2 * D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT,
-			.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES},
-		.Width = static_cast<UINT>(rtDesc.Width),
-		.Height = rtDesc.Height,
-		.Depth = 1 };
+	UINT recordSize = D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT;
+	D3D12_GPU_VIRTUAL_ADDRESS base = dx12ResourceManager->shaderIDs->GetGPUVirtualAddress();
+
+	D3D12_DISPATCH_RAYS_DESC dispatchDesc = {};
+
+	dispatchDesc.RayGenerationShaderRecord.StartAddress = base + 0 * recordSize;
+	dispatchDesc.RayGenerationShaderRecord.SizeInBytes = recordSize;
+
+	dispatchDesc.MissShaderTable.StartAddress = base + 1 * recordSize;
+	dispatchDesc.MissShaderTable.SizeInBytes = 2 * recordSize;
+	dispatchDesc.MissShaderTable.StrideInBytes = recordSize;
+
+	dispatchDesc.HitGroupTable.StartAddress = base + 3 * recordSize;
+	dispatchDesc.HitGroupTable.SizeInBytes = 2 * recordSize;
+	dispatchDesc.HitGroupTable.StrideInBytes = recordSize;
+
+	dispatchDesc.Width = rtDesc.Width;
+	dispatchDesc.Height = rtDesc.Height;
+	dispatchDesc.Depth = 1;
 
 	for (size_t i = 0; i < config.raysPerPixel; i++) {
 		dx12ResourceManager->cmdList->DispatchRays(&dispatchDesc);

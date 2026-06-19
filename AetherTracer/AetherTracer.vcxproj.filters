@@ -43,6 +43,12 @@
     <Filter Include="stb_image">
       <UniqueIdentifier>{3ef8664e-c07c-4af8-b3d3-cae919da8013}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\CUDA">
+      <UniqueIdentifier>{133e9f0f-c9f6-4bb3-ae6f-4f000584d977}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\CUDA">
+      <UniqueIdentifier>{2c778bc2-e169-4eaa-b15d-59f8e3943100}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -92,6 +98,9 @@
     </ClCompile>
     <ClCompile Include="DX12MaterialManager.cpp">
       <Filter>Source Files\DX12\PathTracer</Filter>
+    </ClCompile>
+    <ClCompile Include="CUDARenderer.cpp">
+      <Filter>Source Files\CUDA</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -146,11 +155,17 @@
     <ClInclude Include="DX12MaterialManager.h">
       <Filter>Header Files\DX12\PathTracer</Filter>
     </ClInclude>
-    <ClInclude Include="DX12Resource.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="stb_image.h">
       <Filter>stb_image</Filter>
+    </ClInclude>
+    <ClInclude Include="DX12Resource.h">
+      <Filter>Header Files\DX12\PathTracer</Filter>
+    </ClInclude>
+    <ClInclude Include="CUDARenderer.h">
+      <Filter>Header Files\CUDA</Filter>
+    </ClInclude>
+    <ClInclude Include="Renderer.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -9,6 +9,12 @@ bool missed : read(caller, closesthit, miss) : write(caller, closesthit, miss);
 bool internal : read(caller, closesthit, miss) : write(caller, closesthit, miss);
 };
 
+struct [raypayload] Shadow_Payload // 4 bytes
+{
+bool occluded : read(caller, closesthit, miss) : write(caller, closesthit, miss);
+};
+
+
 struct Vertex
 {
     float3 position;
@@ -53,10 +59,12 @@ Buffer<uint> IndexBuffers[] : register(t3, space3);
 StructuredBuffer<Material> Materials : register(t4, space4);
 Buffer<uint> materialIndexBuffer : register(t5, space5);
 
-Texture2D<float4> textures[] : register(t6, space6);
-SamplerState g_sampler : register(s0);
+Buffer<uint> emissiveEntitiesIndiceBuffer : register(t6, space6);
 
-cbuffer Camerab : register(b0)
+Texture2D<float4> textures[] : register(t7, space7);
+
+
+cbuffer pt_params : register(b0)
 {
     float3 camPos;
     float pad0;
@@ -67,15 +75,19 @@ cbuffer Camerab : register(b0)
     uint minBounces;
     uint maxBounces;
     bool jitter;
+    bool next_event_estimation;
+    uint NEE_samples;
 }
 
+SamplerState g_sampler : register(s0);
 
 // constants
 static const float3 skyTop = float3(0.24f, 0.44f, 1.0f);
 static const float3 skyBottom = float3(0.75f, 0.86f, 1.0f);
 static const float PI = 3.141592653589793; // why not
+const float EPSILON = 1e-5;
 
-float randomPCG(inout uint64_t state)
+float randomPCGFloat(inout uint64_t state)
 {
     uint64_t oldstate = state;
     state = oldstate * 6364136223846793005ULL + 2891336453ULL;
@@ -94,9 +106,9 @@ void RayGeneration()
     uint2 dims = DispatchRaysDimensions().xy;
     
     uint64_t state = randPattern[pixelIndex.x + pixelIndex.y * dims.x];
-    randomPCG(state); // initialize
+    randomPCGFloat(state); // initialize
     
-    float2 jitterAmount = jitter == true ? float2(randomPCG(state), randomPCG(state)) - 0.5f : float2(0.0f, 0.0f);
+    float2 jitterAmount = jitter == true ? float2(randomPCGFloat(state), randomPCGFloat(state)) - 0.5f : float2(0.0f, 0.0f);
     
     float2 uv = (pixelIndex + 0.5f + jitterAmount) / float2(dims);
     
@@ -126,7 +138,7 @@ void RayGeneration()
     for (uint i = 0; i <= maxBounces; i++)
     {
         RAY_FLAG ray_flags = payload.internal ? RAY_FLAG_NONE : RAY_FLAG_NONE; // for refraction
-        TraceRay(scene, ray_flags, 0xFF, 0, 0, 0, ray, payload);
+        TraceRay(scene, ray_flags, 0xFF, 0, 2, 0, ray, payload);
        
         ray.Origin = payload.pos;
         ray.Direction = payload.dir;
@@ -141,7 +153,7 @@ void RayGeneration()
         if (i > minBounces)
         {
             float maxComponent = max(payload.throughput.x, max(payload.throughput.y, payload.throughput.z));
-            float rand = randomPCG(payload.state);
+            float rand = randomPCGFloat(payload.state);
             float p = clamp(maxComponent, 0.05, 0.95);
             if (rand > p)
             {
@@ -154,6 +166,7 @@ void RayGeneration()
     }
     
     finalColor += payload.emission * payload.throughput;
+    //finalColor += payload.throughput;
     randPattern[pixelIndex.x + pixelIndex.y * dims.x] = payload.state; // write back updated state
     accumulationTexture[pixelIndex] += float4(finalColor, 1.0f);
 }
@@ -336,7 +349,7 @@ float3 specularDirection(inout Payload payload, SampledMaterial mat, float3 worl
     float3 omega_m = -viewDirLocal;
     while (dot(viewDirLocal, omega_m) <= 0.0f)
     {
-        float2 xi = float2(randomPCG(payload.state), randomPCG(payload.state));
+        float2 xi = float2(randomPCGFloat(payload.state), randomPCGFloat(payload.state));
 
         // sample local outgoing direction
         omega_m = SampleGGX_VNDF(viewDirLocal, alpha, float3(xi.x, xi.y, 0.0f));
@@ -389,8 +402,8 @@ float3 specularThroughput(inout Payload payload, SampledMaterial mat, float3 wor
 
 float3 diffuseDirection(inout Payload payload, SampledMaterial mat, float3 worldNormal, float2 uv)
 {
-    float rand1 = randomPCG(payload.state);
-    float rand2 = randomPCG(payload.state);
+    float rand1 = randomPCGFloat(payload.state);
+    float rand2 = randomPCGFloat(payload.state);
     
     float3 localDir = SampleHemisphere(rand1, rand2);
     float3 worldDir = localToWorld(localDir, BuildONB(worldNormal));
@@ -462,6 +475,115 @@ float3 refractionThroughput(inout Payload payload, SampledMaterial mat, float3 w
     return throughput;
 }
 
+float3 NextEventEstimation(inout Payload payload, SampledMaterial sampled_material, RayDesc shadow_ray)
+{
+    // select random emissive entity
+    uint num_emissive_entities;
+    emissiveEntitiesIndiceBuffer.GetDimensions(num_emissive_entities);
+    
+    SampledMaterial best_material;
+    best_material.emission = 0;
+    best_material.color = float3(0.0f, 0.0f, 0.0f);
+    float best_distance = 0;
+    float3 best_tri_pos;
+    float3 best_direction;
+    
+    for (uint i = 0; i < NEE_samples; i++)
+    {
+        float rand = randomPCGFloat(payload.state);
+        uint rand_emissive_entity = emissiveEntitiesIndiceBuffer[uint(rand * num_emissive_entities)];
+        
+        uint index_buffer_size;
+        IndexBuffers[rand_emissive_entity].GetDimensions(index_buffer_size);
+        uint rand_triangle = uint(rand * index_buffer_size);
+        rand_triangle /= 3;
+        
+        // Fetch random emissive triangle
+        uint i0 = IndexBuffers[rand_emissive_entity][rand_triangle * 3 + 0];
+        uint i1 = IndexBuffers[rand_emissive_entity][rand_triangle * 3 + 1];
+        uint i2 = IndexBuffers[rand_emissive_entity][rand_triangle * 3 + 2];
+
+        // Fetch Vertices
+        Vertex v0 = VertexBuffers[rand_emissive_entity][i0];
+        Vertex v1 = VertexBuffers[rand_emissive_entity][i1];
+        Vertex v2 = VertexBuffers[rand_emissive_entity][i2];
+        
+        // Interpolate normal from three vertices
+        float2 uv = float2(randomPCGFloat(payload.state), randomPCGFloat(payload.state));
+        float uv0 = 1.0f - uv.x - uv.y;
+        float3 normal = normalize(v0.normal * uv0 + v1.normal * uv.x + v2.normal * uv.y);
+        float3 worldNormal = normalize(mul(normal, (float3x3) ObjectToWorld4x3()));
+        
+        // Interpoloate random position on triangle from three vertices
+        float3 trianglePos = v0.position * uv0 + v1.position * uv.x + v2.position * uv.y;
+        float3 trianglePosWorld = mul(trianglePos, (float3x3) ObjectToWorld4x3());
+        
+        float3 origin = shadow_ray.Origin;
+        
+        float3 direction = normalize(trianglePosWorld - origin);
+        float distance = length(direction);
+        
+        // discard if ray is behind object
+        if (dot(worldNormal, direction) >= 0.0f)
+        {
+            continue;
+        }
+
+        // check that part of the triangle is emissive
+        uint matID = materialIndexBuffer[rand_emissive_entity];
+        Material material = Materials[matID];
+    
+        float2 tex_coord = v0.texcoord * uv0 + v1.texcoord * uv.x + v2.texcoord * uv.y;
+        SampledMaterial sampled_material;
+        sampled_material.color = material.textureMap == 0 ? material.albedo : textures[NonUniformResourceIndex(material.textureMap)].SampleLevel(g_sampler, tex_coord, 0).xyz;
+        sampled_material.emission = material.emissionMap == 0 ? material.emission : textures[NonUniformResourceIndex(material.emissionMap)].SampleLevel(g_sampler, tex_coord, 0).x * material.emission;
+
+        // skip if that point on the triangle is not emissive
+        if (sampled_material.emission == 0)
+        {
+            continue;
+        }
+        
+        
+        // no suitable triangle yet found, take this one OR new sample is better
+        if (best_material.emission == 0.0f || sampled_material.emission / sqrt(distance) > best_material.emission / sqrt(best_distance))
+        {
+            best_material.color = sampled_material.color;
+            best_material.emission = sampled_material.emission;
+            best_distance = distance;
+            best_tri_pos = trianglePosWorld;
+            best_direction = direction;
+            continue;
+        }
+
+    }
+        
+    if (best_material.emission == 0)
+    {
+        // no light found
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+    
+        
+    Shadow_Payload shadow_ray_payload;
+    shadow_ray_payload.occluded = true;
+    shadow_ray.TMax = best_distance - 1e-04;
+    shadow_ray.Direction = best_direction;
+    
+    shadow_ray.Origin += shadow_ray.Direction * 0.0001; // nudge ray slighty
+    
+    TraceRay(scene, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 0xFF, 1, 2, 1, shadow_ray, shadow_ray_payload);
+   
+    if (shadow_ray_payload.occluded == true)
+    {
+        // light occluded
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+
+    // place holder for now    
+    return best_material.color * best_material.emission;
+}
+
 void Shade(inout Payload payload, float2 uv)
 {
     uint instanceIndex = InstanceIndex(); // auto generated
@@ -483,6 +605,7 @@ void Shade(inout Payload payload, float2 uv)
     float3 normal = normalize(v0.normal * uv0 + v1.normal * uv.x + v2.normal * uv.y);    
     float3 worldNormal = normalize(mul(normal, (float3x3) ObjectToWorld4x3()));
     
+    // Flip normal if ray inside
     worldNormal = dot(WorldRayDirection(), worldNormal) < 0 ? worldNormal : worldNormal * -1.0f;
 
     // Fetch material
@@ -512,7 +635,7 @@ void Shade(inout Payload payload, float2 uv)
     float cosTheta_i = abs(dot(WorldRayDirection(), worldNormal));
     
     // Sample lobe
-    float randomSample = randomPCG(payload.state);
+    float randomSample = randomPCGFloat(payload.state);
     float F = fresnelSchlickIOR(cosTheta_i, sampled_material.ior);
     float p_specular = lerp(F, 1.0f, sampled_material.metallic);
     float p_transmission = sampled_material.transmission * (1.0f - p_specular);
@@ -541,12 +664,21 @@ void Shade(inout Payload payload, float2 uv)
         payload.throughput *= diffuseThroughput(payload, sampled_material, worldNormal, uv) / p_diffuse;
     }
     
+    if (next_event_estimation)
+    {
+        RayDesc shadow_ray;
+        shadow_ray.Origin = rayPos;
+        shadow_ray.TMin = 0.001;
+        float3 nee_result = NextEventEstimation(payload, sampled_material, shadow_ray);
+        payload.throughput += nee_result;
+    }
+    
     
     return;
 }
 
 [shader("closesthit")]
-void ClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes attribs)
+void ClosestHitRadiance(inout Payload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
     
     float2 uv = attribs.barycentrics;
@@ -556,7 +688,7 @@ void ClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes att
 }
 
 [shader("miss")]
-void Miss(inout Payload payload)
+void MissRadiance(inout Payload payload)
 {
     payload.missed = true;
     if (!sky)
@@ -570,5 +702,19 @@ void Miss(inout Payload payload)
     float t = saturate(slope * 2 + 0.5);
     float3 skyColor = lerp(skyBottom, skyTop, t);
     payload.emission = float3(skyBrightness, skyBrightness, skyBrightness) * skyColor;
+    return;
+}
+
+[shader("closesthit")]
+void ClosestHitShadow(inout Shadow_Payload payload, BuiltInTriangleIntersectionAttributes attribs)
+{
+    payload.occluded = true;
+    return;
+}
+
+[shader("miss")]
+void MissShadow(inout Shadow_Payload payload)
+{
+    payload.occluded = false;
     return;
 }

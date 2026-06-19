@@ -1,6 +1,8 @@
 #include "AetherTracer.h"
 
+#include "Renderer.h"
 #include "DX12Renderer.h"
+#include "CUDARenderer.h"
 #include "EntityManager.h"
 #include "MeshManager.h"
 #include "MaterialManager.h"
@@ -32,9 +34,11 @@ void AetherTracer::run() {
 			inputManager->processInput(event);
 
 			if (window->wasResized()) {
-				dx12Renderer->resize();
+
+				renderer->resize();
 				window->acknowledgeResize();
 			}
+
 		}
 		inputManager->processInputContinuous(event, std::chrono::duration<double>(deltaTime).count());
 
@@ -45,10 +49,11 @@ void AetherTracer::run() {
 
 		renderImgui();
 
-		dx12Renderer->render();
-		dx12Renderer->present();
 
+		renderer->render();
+		renderer->present();
 
+		
 		frameEndTime = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - frameStartTime);
 		UI::frameTime = std::chrono::duration<float>(frameEndTime).count();
 		UI::numRays = config.accumulate && !entityManager->camera->camMoved ? UI::numRays + config.raysPerPixel : config.raysPerPixel;
@@ -87,9 +92,14 @@ void AetherTracer::init() {
 	materialManager->initDefaultMaterials();
 	entityManager->initScene();
 
-	dx12Renderer = new DX12Renderer{ entityManager, meshManager, materialManager, window };
+	if (config.gfx_api == DX12) {
+		renderer = new DX12Renderer{ entityManager, meshManager, materialManager, window };
+	}
+	else if (config.gfx_api == CUDA) {
+		renderer = new CUDARenderer{ entityManager, meshManager, materialManager, window };
+	}
 
-	dx12Renderer->init();
+	renderer->init();
 
 	UI::meshManager = meshManager;
 	UI::entityManager = entityManager;

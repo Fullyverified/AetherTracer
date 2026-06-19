@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Renderer.h"
+
 #include "DX12PathTracerPipeLine.h"
 
 #include <vector>
@@ -11,21 +13,20 @@
 #pragma comment(lib, "dxgi")
 
 
-class DX12Renderer {
-
+class DX12Renderer : public Renderer {
 public:
 
 	DX12Renderer(EntityManager* entityManager, MeshManager* meshManager, MaterialManager* materialManager, Window* window);
 	~DX12Renderer() {};
 
-	void init();
+	void init() override;
 
 	void initDevice();
 
 
-	void resize();
-	void render();
-	void present();
+	void resize() override;
+	void render() override;
+	void present() override;
 
 	DX12PathTracerPipeLine* dx12PathTracerPipeLine;
 

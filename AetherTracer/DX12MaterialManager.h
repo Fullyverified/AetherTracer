@@ -46,6 +46,8 @@ public:
 
 	void initMaterialBuffers(bool is_update);
 
+	void initEmissiveIndexBuffer(bool is_update);
+
 	DX12ResourceHandle* createTextureFromVector(PT::Vector3 value);
 
 	DX12ResourceHandle* createTextureFromImage(std::string name);
@@ -74,6 +76,13 @@ public:
 
 	std::vector<DX12ResourceHandle*> texture_maps;
 	std::unordered_map<std::string, UINT> texture_indices_map;
+
+	std::vector<UINT> emissive_entities_indices;
+	std::unordered_map<std::string, UINT> emissive_entities_map; // stores model name + material name as key
+
+	std::vector<DX12ResourceHandle*> emissive_triangles_indices;
+	DX12ResourceHandle* emissive_entities_indices_buffer;
+
 
 	// inherited from the DX12Renderer -> DX12PathTracerPipeLine -> this
 	IDXGIFactory4* factory;
